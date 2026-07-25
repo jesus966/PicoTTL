@@ -1,0 +1,82 @@
+;
+; PicoTTL - TTL video framework for the Raspberry Pi Pico 2 (RP2350)
+;
+; ttl_pixels.pio
+; Pixel output state machine (internal to the RP2350 backend).
+;
+; Streams 1-bit pixels from the TX FIFO to the video pin, gated by the
+; display-enable signal that the timing state machine drives (the same
+; role the 6845 CRTC's Display Enable output plays in original hardware).
+; This keeps data consumption exactly aligned with visible spans - the
+; state machine consumes nothing during horizontal or vertical blanking.
+;
+; Mapping and preloads (configured by PioScanlineEngine):
+;   IN pin 0  = display-enable GPIO
+;   OUT pin 0 = video GPIO
+;   Y         = visible pixels per line - 1
+;   OUT shift = left (MSB first), autopull, threshold 32
+;   Clock     = 2x pixel clock (the pixel loop takes 2 cycles per pixel)
+;
+; Copyright (c) 2026 Jesús Fernández Gamito
+; SPDX-License-Identifier: MIT
+;
+
+.program ttl_pixels
+
+.wrap_target
+    wait 0 pin 0        ; make sure the previous visible span has ended
+    wait 1 pin 0        ; wait for the start of a visible span
+    mov x, y            ; reload the pixel counter
+pixel_loop:
+    out pins, 1         ; drive one pixel (2 cycles per pixel with the jmp)
+    jmp x-- pixel_loop
+    mov pins, null      ; video low during blanking
+.wrap
+
+; Identical structure for 2-bit packed pixels: each pixel drives two
+; consecutive GPIOs (pixel value bit k -> OUT pin base + k). The
+; electrical meaning of those bits belongs to the display backend.
+.program ttl_pixels2
+
+.wrap_target
+    wait 0 pin 0
+    wait 1 pin 0
+    mov x, y
+pixel_loop:
+    out pins, 2         ; drive one 2-bit pixel (2 cycles per pixel)
+    jmp x-- pixel_loop
+    mov pins, null      ; outputs low during blanking
+.wrap
+
+; Identical structure for 4-bit packed pixels (e.g. the CGA backend's
+; RGBI wires: pixel value = IBM color number, bit 0 = Blue upward).
+.program ttl_pixels4
+
+.wrap_target
+    wait 0 pin 0
+    wait 1 pin 0
+    mov x, y
+pixel_loop:
+    out pins, 4         ; drive one 4-bit pixel (2 cycles per pixel)
+    jmp x-- pixel_loop
+    mov pins, null      ; outputs low during blanking
+.wrap
+
+; Identical structure for 8-bit packed pixels. Used by backends whose
+; wire count does not divide 32 (e.g. the EGA backend's six rgbRGB
+; wires): the OSR refills in 32-bit words, so the stream depth must
+; divide 32 - a 6-bit stream cannot be shifted out continuously. Such
+; backends store one pixel per byte (meaningful bits in the low bits)
+; and map fewer OUT pins than the shift count; the PIO discards the
+; surplus high bits.
+.program ttl_pixels8
+
+.wrap_target
+    wait 0 pin 0
+    wait 1 pin 0
+    mov x, y
+pixel_loop:
+    out pins, 8         ; drive one 8-bit pixel (2 cycles per pixel)
+    jmp x-- pixel_loop
+    mov pins, null      ; outputs low during blanking
+.wrap

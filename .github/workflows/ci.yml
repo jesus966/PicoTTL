@@ -1,0 +1,65 @@
+# PicoTTL continuous integration.
+#
+# Two independent jobs:
+#   host-tests: builds the platform-independent framework with the host
+#     backend and runs the automated regression suite (no Pico SDK).
+#   firmware: cross-compiles every UF2 (framework, 45 examples, 3
+#     demonstrations, 3 diagnostics apps) against Pico SDK 2.3.0.
+#
+# NOTE: this workflow has never run (the repository predates being
+# public). Expect the first run to need minor adjustments.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  host-tests:
+    name: Host test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y ninja-build g++
+      - name: Configure
+        run: cmake -S tests -B build-host -G Ninja
+      - name: Build
+        run: cmake --build build-host
+      - name: Run tests
+        run: ./build-host/picottl_tests
+
+  firmware:
+    name: RP2350 firmware build
+    runs-on: ubuntu-latest
+    env:
+      PICO_SDK_PATH: ${{ github.workspace }}/pico-sdk
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout Pico SDK 2.3.0
+        uses: actions/checkout@v4
+        with:
+          repository: raspberrypi/pico-sdk
+          ref: "2.3.0"
+          path: pico-sdk
+          submodules: recursive
+      - name: Install toolchain
+        run: >
+          sudo apt-get update && sudo apt-get install -y
+          cmake ninja-build build-essential
+          gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
+          libusb-1.0-0-dev
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DPICO_BOARD=pico2
+      - name: Build all UF2s
+        run: cmake --build build
+      - name: Upload all UF2 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: picottl-uf2-all
+          path: |
+            build/examples/**/*.uf2
+            build/apps/**/*.uf2
+          if-no-files-found: error

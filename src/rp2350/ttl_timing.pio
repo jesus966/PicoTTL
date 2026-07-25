@@ -1,0 +1,35 @@
+;
+; PicoTTL - TTL video framework for the Raspberry Pi Pico 2 (RP2350)
+;
+; ttl_timing.pio
+; Sync/timing generator state machine.
+;
+; The state machine runs at the pixel clock and consumes one 32-bit word
+; per timing "segment" (a span of pixels with constant signal levels).
+; A scanline is normally three segments: [active+front porch][sync][back porch].
+;
+; Word layout (OUT shift direction = right, autopull, threshold 32):
+;
+;   bits [2:0]  pins  - signal levels: bit 0 = HSYNC pin, bit 1 = VSYNC pin,
+;                       bit 2 = display-enable (pins must be consecutive
+;                       GPIOs starting at the HSYNC pin; the display-enable
+;                       pin is only mapped when pixel output is in use).
+;   bits [31:3] delay - segment length in pixel clocks MINUS the fixed
+;                       3-cycle instruction overhead. Minimum segment
+;                       length is therefore 3 pixels.
+;
+; Segment duration = 1 (out pins) + 1 (out x) + delay+1 (jmp loop)
+;                  = delay + 3 cycles.
+;
+; Copyright (c) 2026 Jesús Fernández Gamito
+; SPDX-License-Identifier: MIT
+;
+
+.program ttl_timing
+
+.wrap_target
+    out pins, 3         ; drive HSYNC/VSYNC/display-enable for this segment
+    out x, 29           ; segment delay
+delay_loop:
+    jmp x-- delay_loop  ; hold levels for delay+1 cycles
+.wrap

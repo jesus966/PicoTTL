@@ -1,0 +1,63 @@
+# Build and publish precompiled PicoTTL firmware for a version tag.
+
+name: Release firmware
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Package RP2350 UF2 files
+    runs-on: ubuntu-latest
+    env:
+      PICO_SDK_PATH: ${{ github.workspace }}/pico-sdk
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout Pico SDK 2.3.0
+        uses: actions/checkout@v4
+        with:
+          repository: raspberrypi/pico-sdk
+          ref: "2.3.0"
+          path: pico-sdk
+          submodules: recursive
+      - name: Install toolchain
+        run: >
+          sudo apt-get update && sudo apt-get install -y
+          cmake ninja-build build-essential
+          gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
+          libusb-1.0-0-dev
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DPICO_BOARD=pico2
+      - name: Build all UF2s
+        run: cmake --build build
+      - name: Package UF2 files
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          mkdir -p "release/examples" "release/diagnostics"
+
+          find build/examples -type f -name '*.uf2' -exec cp {} release/examples/ \;
+          find build/apps -type f -name '*.uf2' -exec cp {} release/diagnostics/ \;
+
+          test "$(find release/examples -type f -name '*.uf2' | wc -l)" -gt 0
+          test "$(find release/diagnostics -type f -name '*.uf2' | wc -l)" -eq 3
+
+          (
+            cd release
+            zip -q -r "../PicoTTL-${version}-examples.zip" examples
+            zip -q -r "../PicoTTL-${version}-diagnostics.zip" diagnostics
+          )
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: PicoTTL ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            PicoTTL-${{ github.ref_name }}-examples.zip
+            PicoTTL-${{ github.ref_name }}-diagnostics.zip

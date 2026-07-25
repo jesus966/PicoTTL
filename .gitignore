@@ -1,0 +1,5 @@
+build
+.vscode/*
+/build-host
+*.pyc
+__pycache__/
