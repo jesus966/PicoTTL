@@ -1,7 +1,9 @@
 # PicoTTL
 
 [![CI](https://github.com/jesus966/PicoTTL/actions/workflows/ci.yml/badge.svg)](https://github.com/jesus966/PicoTTL/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/jesus966/PicoTTL?include_prereleases&sort=semver)](https://github.com/jesus966/PicoTTL/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Latest release downloads](https://img.shields.io/github/downloads/jesus966/PicoTTL/latest/total)](https://github.com/jesus966/PicoTTL/releases/latest)
 
 TTL video framework for the Raspberry Pi Pico 2 (RP2350). PicoTTL
 generates genuine IBM MDA, CGA and EGA video signals in hardware - PIO
