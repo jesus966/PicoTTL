@@ -50,13 +50,3 @@ roughly 1/16 s for MDA, 1/8 s for CGA 640, ~1/4 s for EGA).
 | `H` | hello / mode table | one info line |
 | `M` + index byte | select mode (reclocks, restarts raster) | `OK <fbBytes>` / `ERR …` |
 | `F` + u32le length + bytes | full framebuffer | `ACK` / `ERR …` |
-
-No rectangles, no compression, no deltas, no dirty tracking - those
-belong to **PicoTTL Stream**, which builds on exactly these concepts
-and adds rectangles, compression, delta encoding, adaptive updates and
-video (see its protocol specification). This example is pedagogical:
-the complete host->PicoTTL pipeline with the smallest possible protocol.
-The conversion routines in `host/converter.py` are written to be reused
-by PicoTTL Stream nearly unchanged - in particular, ordered dithering
-is chosen because it is position-deterministic, the property delta
-encoding will later depend on.

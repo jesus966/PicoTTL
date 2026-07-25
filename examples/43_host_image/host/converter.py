@@ -20,8 +20,7 @@ matching picottl::PackedFramebuffer exactly.
 
 Ordered (Bayer) dithering is used deliberately: it is
 position-deterministic, so static image regions always produce
-byte-identical framebuffers - the property PicoTTL Stream's delta
-encoding will rely on. These routines are designed for reuse there.
+byte-identical framebuffers. These routines are designed for reuse there.
 """
 
 from dataclasses import dataclass

@@ -7,8 +7,6 @@ The classic TTL monitors do NOT have square pixels, so fitting an image
 "preserving aspect ratio" must account for each mode's pixel aspect
 ratio (PAR): the image is fitted in *displayed* space (a 4:3 tube) and
 then resampled onto the mode's non-square pixel grid.
-
-Reusable by PicoTTL Stream unchanged.
 """
 
 from PIL import Image

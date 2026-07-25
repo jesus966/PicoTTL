@@ -14,10 +14,6 @@
 // remains ONLY a display device. Everything intelligent happens in the
 // companion Python application (see host/).
 //
-// This example is NOT a prototype of PicoTTL Stream. It is the
-// pedagogical minimum. PicoTTL Stream builds on exactly these concepts
-// and adds rectangles, compression, delta encoding, adaptive updates
-// and video - see its protocol specification.
 //
 // Protocol (USB CDC, any baud rate; single-letter commands):
 //   'H'                     -> one-line HELLO with the mode table

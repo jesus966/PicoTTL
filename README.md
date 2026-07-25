@@ -90,7 +90,7 @@ across backends. The full reference is
 ## Current status
 
 Fully implemented and **validated end to end on real hardware** (IBM
-5151, Samtron SC-431E CGA, EGA monitor), including the reference
+5151, Samtron SC-431E CGA/EGA monitor), including the reference
 connector wiring, all examples, the three showcase demonstrations and
 the three diagnostics applications. There are no known functional
 issues.
@@ -233,9 +233,6 @@ are pattern suites for testing and adjusting real CRTs.
 
 ## Roadmap
 
-- **PicoTTL Stream** (separate project): host->Pico video streaming
-  over USB CDC with a frozen datagram protocol; specification complete,
-  implementation in progress.
 - Overscan and non-IBM raster variants (the engine already accepts
   arbitrary timings; `VideoMode` is a curated catalog, not a limit).
 - Additional display families (e.g. Amstrad monitors) as new backends.
