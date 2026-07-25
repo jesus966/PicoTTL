@@ -33,22 +33,16 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin main develop
-          git fetch origin \
-            "refs/heads/$SYNC_BRANCH:refs/remotes/origin/$SYNC_BRANCH" \
-            || true
-          git switch --force-create "$SYNC_BRANCH" origin/develop
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --force-create "$SYNC_BRANCH" origin/main
 
-          if git merge-base --is-ancestor origin/main HEAD; then
+          if git rev-parse --verify origin/develop >/dev/null &&
+             git merge-base --is-ancestor origin/main origin/develop; then
             echo "Develop already contains main."
             echo "SYNC_NEEDED=false" >> "$GITHUB_ENV"
             exit 0
           fi
 
-          git merge --no-ff origin/main \
-            -m "chore: sync main into develop"
-          git push --force-with-lease origin \
+          git push --force origin \
             "HEAD:$SYNC_BRANCH"
           echo "SYNC_NEEDED=true" >> "$GITHUB_ENV"
 
