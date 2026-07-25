@@ -37,6 +37,8 @@ jobs:
             "refs/heads/$SYNC_BRANCH:refs/remotes/origin/$SYNC_BRANCH" \
             || true
           git switch --force-create "$SYNC_BRANCH" origin/develop
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           if git merge-base --is-ancestor origin/main HEAD; then
             echo "Develop already contains main."
