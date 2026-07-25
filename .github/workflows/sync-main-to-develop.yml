@@ -1,0 +1,76 @@
+name: Sync main to develop
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    name: Open main to develop sync PR
+    runs-on: ubuntu-latest
+    env:
+      SYNC_BRANCH: automation/sync-main-to-develop
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out develop
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Create sync branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main develop
+          git fetch origin \
+            "refs/heads/$SYNC_BRANCH:refs/remotes/origin/$SYNC_BRANCH" \
+            || true
+          git switch --force-create "$SYNC_BRANCH" origin/develop
+
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "Develop already contains main."
+            echo "SYNC_NEEDED=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          git merge --no-ff origin/main \
+            -m "chore: sync main into develop"
+          git push --force-with-lease origin \
+            "HEAD:$SYNC_BRANCH"
+          echo "SYNC_NEEDED=true" >> "$GITHUB_ENV"
+
+      - name: Open or update sync pull request
+        if: env.SYNC_NEEDED == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr_number="$(gh pr list \
+            --base develop \
+            --head "$SYNC_BRANCH" \
+            --state open \
+            --json number \
+            --jq '.[0].number')"
+
+          if [[ -n "$pr_number" ]]; then
+            gh pr edit "$pr_number" \
+              --title "chore: sync main into develop" \
+              --body "This PR keeps \`develop\` synchronized with \`main\`.
+
+It was opened automatically after a change landed on \`main\`.
+Please review and merge it when the required checks pass."
+          else
+            gh pr create \
+              --base develop \
+              --head "$SYNC_BRANCH" \
+              --title "chore: sync main into develop" \
+              --body "This PR keeps \`develop\` synchronized with \`main\`.
+
+It was opened automatically after a change landed on \`main\`.
+Please review and merge it when the required checks pass."
+          fi
