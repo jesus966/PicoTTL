@@ -16,6 +16,11 @@ jobs:
     env:
       SYNC_BRANCH: automation/sync-main-to-develop
       GH_TOKEN: ${{ github.token }}
+      SYNC_PR_BODY: |
+        This PR keeps `develop` synchronized with `main`.
+
+        It was opened automatically after a change landed on `main`.
+        Please review and merge it when the required checks pass.
     steps:
       - name: Check out develop
         uses: actions/checkout@v4
@@ -60,17 +65,11 @@ jobs:
           if [[ -n "$pr_number" ]]; then
             gh pr edit "$pr_number" \
               --title "chore: sync main into develop" \
-              --body "This PR keeps \`develop\` synchronized with \`main\`.
-
-It was opened automatically after a change landed on \`main\`.
-Please review and merge it when the required checks pass."
+              --body "$SYNC_PR_BODY"
           else
             gh pr create \
               --base develop \
               --head "$SYNC_BRANCH" \
               --title "chore: sync main into develop" \
-              --body "This PR keeps \`develop\` synchronized with \`main\`.
-
-It was opened automatically after a change landed on \`main\`.
-Please review and merge it when the required checks pass."
+              --body "$SYNC_PR_BODY"
           fi
