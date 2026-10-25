@@ -27,6 +27,22 @@ namespace {
 /// (see ttl_timing.pio). Also the minimum segment length.
 constexpr std::uint32_t kSegmentOverhead = 3;
 
+constexpr std::uint32_t kMaxPioClockDivider = 65'536;
+
+bool pioClockDividerValid(float divider) {
+    return divider >= 1.0f && divider <= kMaxPioClockDivider;
+}
+
+void setPioClockDivider(pio_sm_config* config, float divider) {
+    if (divider == kMaxPioClockDivider) {
+        // INT=0, FRAC=0 encodes 65536. Avoid the SDK 2.3.0 float
+        // helper's out-of-range conversion of 65536 to uint16_t.
+        sm_config_set_clkdiv_int_frac8(config, 0, 0);
+    } else {
+        sm_config_set_clkdiv(config, divider);
+    }
+}
+
 /// Maximum segment length in pixels (29-bit delay field).
 constexpr std::uint32_t kMaxSegmentPixels = ((1u << 29) - 1) + kSegmentOverhead;
 
@@ -175,6 +191,9 @@ bool PioScanlineEngine::configure(const VideoTiming& timing) {
     if (!buildTimingBuffer(timing)) {
         return reject();
     }
+    if (!prepareClockConfig(timing)) {
+        return reject();
+    }
     timing_ = timing;
     if (!hardwareAcquired_) {
         if (!acquireHardware()) {
@@ -191,11 +210,9 @@ bool PioScanlineEngine::configure(const VideoTiming& timing) {
     if (pixelSource_ != nullptr && !preparePixelProgram()) {
         return reject();
     }
-    if (!applyPioConfig()) {
-        return reject();
-    }
-    if (pixelSource_ != nullptr && !applyPixelPioConfig()) {
-        return reject();
+    applyPioConfig();
+    if (pixelSource_ != nullptr) {
+        applyPixelPioConfig();
     }
     setupDma();
     if (pixelSource_ != nullptr) {
@@ -503,15 +520,19 @@ bool PioScanlineEngine::preparePixelProgram() {
     return true;
 }
 
-bool PioScanlineEngine::applyPioConfig() {
-    PIO pio = pio_get_instance(config_.pioInstance);
-
-    const float systemClockHz = static_cast<float>(clock_get_hz(clk_sys));
-    const float pixelClockHz = static_cast<float>(timing_.pixelClockHz);
-    float divider = systemClockHz / pixelClockHz;
-    if (divider < 1.0f) {
-        return false; // System clock too slow for this pixel clock.
+bool PioScanlineEngine::prepareClockConfig(const VideoTiming& timing) {
+    const std::uint32_t systemHz = clock_get_hz(clk_sys);
+    const std::uint32_t pixelHz = timing.pixelClockHz;
+    // Check the exact ratio before float rounding can hide an invalid
+    // endpoint. The widened product fits for every uint32_t frequency.
+    if (pixelHz == 0 || systemHz < pixelHz ||
+        static_cast<std::uint64_t>(systemHz) >
+            static_cast<std::uint64_t>(pixelHz) * kMaxPioClockDivider) {
+        return false;
     }
+    const float systemClockHz = static_cast<float>(systemHz);
+    const float pixelClockHz = static_cast<float>(pixelHz);
+    float divider = systemClockHz / pixelClockHz;
 
     // Prefer a jitter-free integer divider when the resulting pixel clock
     // stays within 1% of nominal (CRT monitors tolerate far more).
@@ -523,7 +544,18 @@ bool PioScanlineEngine::applyPioConfig() {
             divider = rounded;
         }
     }
+    // Validate the pixel path after snapping: e.g. 1.98 can legitimately
+    // snap to 2, giving a pixel state machine divider of exactly 1.
+    if (!pioClockDividerValid(divider) ||
+        (pixelSource_ != nullptr && !pioClockDividerValid(divider / 2.0f))) {
+        return false;
+    }
     timingClockDivider_ = divider;
+    return true;
+}
+
+void PioScanlineEngine::applyPioConfig() {
+    PIO pio = pio_get_instance(config_.pioInstance);
 
     // Re-own the sync (and, on the pixel path, display-enable) GPIOs on
     // EVERY configure, not only at first acquire: in multi-backend
@@ -549,23 +581,19 @@ bool PioScanlineEngine::applyPioConfig() {
                            pixelSource_ != nullptr ? 3 : 2);
     sm_config_set_out_shift(&c, /*shift_right=*/true, /*autopull=*/true, 32);
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
-    sm_config_set_clkdiv(&c, divider);
+    setPioClockDivider(&c, timingClockDivider_);
 
     pio_sm_init(pio, config_.stateMachine,
                 static_cast<uint>(programOffset_), &c);
     driveSignalsIdle();
-    return true;
 }
 
-bool PioScanlineEngine::applyPixelPioConfig() {
+void PioScanlineEngine::applyPixelPioConfig() {
     PIO pio = pio_get_instance(config_.pioInstance);
 
     // The pixel program takes 2 cycles per pixel (out + jmp), so its
     // state machine runs at twice the pixel clock.
     const float divider = timingClockDivider_ / 2.0f;
-    if (divider < 1.0f) {
-        return false;
-    }
 
     pio_sm_config c =
         pixelBitsPerPixel_ == 8
@@ -585,11 +613,10 @@ bool PioScanlineEngine::applyPixelPioConfig() {
     // the framebuffer byte-linear with MSB = leftmost pixel.
     sm_config_set_out_shift(&c, /*shift_right=*/false, /*autopull=*/true, 32);
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
-    sm_config_set_clkdiv(&c, divider);
+    setPioClockDivider(&c, divider);
 
     pio_sm_init(pio, config_.pixelStateMachine,
                 static_cast<uint>(pixelProgramOffset_), &c);
-    return true;
 }
 
 void PioScanlineEngine::setupDma() {
