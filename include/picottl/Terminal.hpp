@@ -13,6 +13,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 #include "picottl/Color.hpp"
 #include "picottl/Text.hpp"
@@ -88,13 +89,24 @@ struct TerminalCell {
 ///   while (true) { terminal.update(nowMs()); ... }
 class Terminal {
 public:
-    /// Cell count required for a given grid (for sizing static buffers).
+    /// Cell count (not byte count) required for a given grid.
+    /// Returns zero for nonpositive dimensions or a count that cannot fit
+    /// in size_t. Zero is therefore not an unambiguous error indicator.
+    /// Positive dimensions are not restricted to the current Text grid limit.
+    /// A representable count does not guarantee that count * sizeof(TerminalCell)
+    /// fits in size_t. Callers allocating storage must check the result and
+    /// byte-size representability separately (count <= SIZE_MAX / sizeof(TerminalCell)).
     static constexpr std::size_t cellsFor(std::int32_t columns,
                                           std::int32_t rows) {
-        return columns > 0 && rows > 0
-                   ? static_cast<std::size_t>(columns) *
-                         static_cast<std::size_t>(rows)
-                   : 0u;
+        if (columns <= 0 || rows <= 0) {
+            return 0;
+        }
+        const auto columnCount = static_cast<std::uint32_t>(columns);
+        const auto rowCount = static_cast<std::uint32_t>(rows);
+        if (columnCount > std::numeric_limits<std::size_t>::max() / rowCount) {
+            return 0;
+        }
+        return static_cast<std::size_t>(columnCount) * static_cast<std::size_t>(rowCount);
     }
 
     /// @param text      Renderer and geometry source. Must outlive this.
@@ -102,6 +114,8 @@ public:
     /// @param cellCount Entries in `cells`; if smaller than
     ///                  cellsFor(text.columns(), text.rows()) the
     ///                  terminal is inert (all operations no-op).
+    ///                  An empty grid or unrepresentable required storage
+    ///                  size also leaves the terminal inert.
     Terminal(Text& text, TerminalCell* cells, std::size_t cellCount);
 
     /// True when the constructor accepted the cell storage.

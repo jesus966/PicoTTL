@@ -17,14 +17,15 @@ Terminal::Terminal(Text& text, TerminalCell* cells, std::size_t cellCount)
     : text_(text) {
     const std::int32_t columns = text.columns();
     const std::int32_t rows = text.rows();
-    if (cells == nullptr || cellCount < cellsFor(columns, rows) ||
-        columns <= 0 || rows <= 0) {
+    const std::size_t required = cellsFor(columns, rows);
+    if (cells == nullptr || required == 0 || cellCount < required ||
+        required > std::numeric_limits<std::size_t>::max() / sizeof(TerminalCell)) {
         return; // Remains inert; all operations are no-ops.
     }
     cells_ = cells;
     columns_ = columns;
     rows_ = rows;
-    for (std::size_t i = 0; i < cellsFor(columns, rows); ++i) {
+    for (std::size_t i = 0; i < required; ++i) {
         cells_[i] = TerminalCell{};
     }
 }
@@ -101,7 +102,8 @@ void Terminal::clear() {
         return;
     }
     hideCursorOverlay();
-    for (std::size_t i = 0; i < cellsFor(columns_, rows_); ++i) {
+    const std::size_t count = cellsFor(columns_, rows_);
+    for (std::size_t i = 0; i < count; ++i) {
         cells_[i] = TerminalCell{' ', attributes_};
     }
     text_.setColors(attributes_.foreground, attributes_.background);
