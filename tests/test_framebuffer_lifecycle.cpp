@@ -74,6 +74,7 @@ void detachAndRestart(VideoMode mode, VideoMode otherMode) {
         CHECK(!engineRecording().running);
         CHECK(display.setFramebuffer(nullptr));
         CHECK(display.surface() == nullptr);
+        CHECK(!display.graphics().isBound()); // retire CPU drawing before another begin()
         CHECK(engineRecording().source == nullptr); // invalidated immediately
         CHECK_EQ(engineRecording().sourceBytes, 0u);
     } // The old framebuffer object is no longer alive.

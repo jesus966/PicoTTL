@@ -45,6 +45,7 @@ add_executable(picottl_tests
     test_code_page.cpp
     test_terminal.cpp
     test_terminal_sizing.cpp
+    test_display_lifecycle.cpp
     test_ansi_terminal.cpp
     test_framebuffer_lifecycle.cpp
     test_dma_stop.cpp
