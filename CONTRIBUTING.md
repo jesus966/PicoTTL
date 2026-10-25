@@ -83,7 +83,9 @@ cmake --build build-host
 ./build-host/picottl_tests
 ```
 
-- The suite must pass (currently 56 tests, 0 failures).
+- The suite must pass. Backend lifecycle regressions also run on the
+  host against a recording scanline engine; they do not emulate or
+  validate DMA, PIO or CRT signals.
 - Platform-independent behaviour changes need new tests in `tests/`.
 - The Pico build must also compile cleanly:
   `cmake -S . -B build -G Ninja && cmake --build build`.
@@ -112,8 +114,81 @@ Match the surrounding code; in particular:
   applicable, and documentation updates.
 - Generated files (`src/fonts/*.cpp`) are never edited by hand -
   change the generator in `tools/` and regenerate.
-- Commit style follows the existing history: `feat:`, `fix:`,
-  `refactor:`, `docs:` prefixes.
+- Use [Conventional Commits](https://www.conventionalcommits.org/),
+  following the release-note policy below.
+
+## Commit messages and release notes
+
+Write commit messages and changelog entries in English:
+
+```text
+type(optional-scope): concise description
+
+Optional explanation and validation notes.
+
+Changelog: compatibility
+```
+
+Use `feat` for features, `fix` for bug fixes, `perf` for optimizations,
+`refactor` for internal restructuring, `test` for tests, `docs` for
+documentation, `build` for the build system, `ci` for automation, and
+`chore` for maintenance. Keep the type accurate even when a change is
+important to users. Squash PR titles should follow the same convention.
+
+[git-cliff](https://git-cliff.org/) uses `cliff.toml` to include features,
+fixes and performance changes by default. Public documentation scopes
+`api`, `integration` and `usage` are included too. Other documentation,
+tests, refactoring, build, CI and maintenance changes are omitted unless
+their commit has one of these footers:
+
+- `Changelog: compatibility` for supported platforms, toolchains or
+  integration requirements.
+- `Changelog: documentation` for significant user documentation.
+- `Changelog: changed` for other user-visible changes.
+- `Changelog: skip` to suppress an otherwise included entry.
+
+Merge messages and branch-sync maintenance are omitted. Repeated entries
+with the same group, scope and description are emitted once per release;
+PR-number suffixes are ignored for that comparison. Do not repeat a PR's
+changes in its merge message. A breaking marker is never silently hidden,
+but does not authorize breaking the frozen public API or bump a version.
+
+### Preparing a GitFlow release
+
+Develop fixes on `bugfix/` branches based on `develop` and integrate them
+through PRs. During preparation of an agreed `release/x.y.z` branch:
+
+1. Ensure all intended changes are committed and the release tags are
+   available locally (`git fetch --tags` when appropriate).
+2. Install git-cliff and check `git-cliff --version`. Version **2.14.2**
+   is verified with this configuration. Compatibility with other 2.x
+   versions has not been verified.
+3. Preview committed changes since the last reachable release tag without
+   touching the existing changelog:
+
+   ```sh
+   git-cliff --config cliff.toml --unreleased
+   ```
+
+4. Use the **already agreed** release number; replace `x.y.z` below.
+   Preview its entry first, then prepend it once to the existing file:
+
+   ```sh
+   git-cliff --config cliff.toml --unreleased --tag vx.y.z
+   git-cliff --config cliff.toml --unreleased --tag vx.y.z --prepend CHANGELOG.md
+   git diff -- CHANGELOG.md
+   ```
+
+`--tag` labels the generated entry; it does not create a Git tag. Do not
+use `--bump` to select a release number automatically. Review dates,
+classification and duplicates before committing the generated entry as
+`chore(release): update changelog`. Do not prepend the same release twice.
+Generation reads committed history, so uncommitted fixes do not appear.
+
+Keep the curated `1.0.0` entry and its original date unchanged: the sparse
+initial commit history cannot reconstruct it. Use `--prepend`, not a full
+`--output CHANGELOG.md` regeneration. Existing tags, version declarations
+and publication workflows remain the release maintainer's responsibility.
 
 ## Licensing
 
