@@ -10,6 +10,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 SPEC = importlib.util.spec_from_file_location(
     "quality", Path(__file__).resolve().parents[1] / "quality.py")
@@ -18,6 +21,12 @@ SPEC.loader.exec_module(quality)
 
 
 class QualityReports(unittest.TestCase):
+    def analyze(self, args):
+        # Small mocked analyzer invocations still have a complete test scope.
+        with patch.multiple(quality, PORTABLE_SOURCES={"src/Graphics.cpp"},
+                            DEVICE_SOURCES=set()):
+            return quality.static_analysis(args)
+
     def test_scope_excludes_unexecuted_hardware_and_generated_dependencies(self):
         for source in ("src/Graphics.cpp", "src/rp2350/MdaDisplayDevice.cpp",
                        "include/picottl/PackedFramebuffer.hpp"):
@@ -64,7 +73,7 @@ class QualityReports(unittest.TestCase):
                 "file": str(quality.ROOT / "src/Graphics.cpp"),
                 "directory": str(quality.ROOT), "command": "c++ -c src/Graphics.cpp"
             }]))
-            result = quality.static_analysis(SimpleNamespace(
+            result = self.analyze(SimpleNamespace(
                 build_dir=output, output_dir=output / "report", tool="cppcheck",
                 executable=str(output / "missing-executable")))
             self.assertEqual(result, 2)
@@ -95,7 +104,7 @@ class QualityReports(unittest.TestCase):
                 "file": str(quality.ROOT / "src/rp2350/PioScanlineEngine.cpp"),
                 "directory": str(quality.ROOT), "command": "arm-none-eabi-g++ -c engine.cpp"
             }]))
-            result = quality.static_analysis(SimpleNamespace(
+            result = self.analyze(SimpleNamespace(
                 build_dir=output, output_dir=output / "report", tool="cppcheck",
                 executable="must-not-run"))
             self.assertEqual(result, 2)
@@ -106,7 +115,7 @@ class QualityReports(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
             (output / "compile_commands.json").write_text('[{"file": 123}]')
-            result = quality.static_analysis(SimpleNamespace(
+            result = self.analyze(SimpleNamespace(
                 build_dir=output, output_dir=output / "report", tool="clang-tidy",
                 executable="must-not-run"))
             self.assertEqual(result, 2)
@@ -123,7 +132,7 @@ class QualityReports(unittest.TestCase):
             version = subprocess.CompletedProcess([], 0, "clang-tidy version\n")
             crash = subprocess.CompletedProcess([], -11, "Graphics.cpp:1: error: diagnostic\n")
             with patch.object(quality, "run", side_effect=[version, crash]):
-                result = quality.static_analysis(SimpleNamespace(
+                result = self.analyze(SimpleNamespace(
                     build_dir=output, output_dir=output / "report",
                     tool="clang-tidy", executable="clang-tidy"))
             self.assertEqual(result, 2)
@@ -141,7 +150,7 @@ class QualityReports(unittest.TestCase):
             version = subprocess.CompletedProcess([], 0, "Cppcheck version\n")
             invalid = subprocess.CompletedProcess([], 0, "", "<not-a-cppcheck-report/>")
             with patch.object(quality.subprocess, "run", side_effect=[version, invalid]):
-                result = quality.static_analysis(SimpleNamespace(
+                result = self.analyze(SimpleNamespace(
                     build_dir=output, output_dir=output / "report",
                     tool="cppcheck", executable="cppcheck"))
             self.assertEqual(result, 2)

@@ -4,7 +4,8 @@ The two existing required checks keep their exact names: **Host test suite**
 and **RP2350 firmware build**. New checks are advisory initially: their real
 failures remain visible, but repository rules must not require them yet.
 There is no blanket `continue-on-error`, automatic production fix, warning
-baseline suppression, or minimum coverage percentage.
+suppression, or minimum coverage percentage. Static analysis uses an explicit,
+versioned baseline for reviewed pre-existing diagnostics; see below.
 
 ## Scope and reproducibility
 
@@ -23,6 +24,7 @@ All quality jobs use Ubuntu 24.04. Locally verified tools:
 | clang-tidy | 18.1.3 |
 | cppcheck | 2.13.0 |
 | lcov | 2.0 |
+| PyYAML (structured clang-tidy report parser) | 6.0.1 |
 | CodeQL CLI / cpp queries | 2.27.3 / 1.9.2 |
 | actionlint / ShellCheck | 1.7.12 / 0.9.0 |
 
@@ -38,7 +40,7 @@ On Ubuntu 24.04 (including WSL), install the local dependencies once:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y cmake ninja-build g++-13 clang-tidy-18 cppcheck lcov
+sudo apt-get install -y cmake ninja-build g++-13 clang-tidy-18 cppcheck lcov python3-yaml
 ```
 
 ## Host tests, sanitizers and coverage
@@ -121,17 +123,69 @@ cppcheck enables warning, performance and portability diagnostics.
 
 Each analyzer writes a complete log, machine-readable report and summary:
 
-- Exit 0 / `clean`: completed without reported findings.
-- Exit 1 / `findings`: analyzer diagnostics, requiring review.
+- Exit 0 / `clean` or `known_findings`: completed with no new diagnostics.
+- Exit 1 / `new_findings`: at least one diagnostic outside the baseline.
 - Exit 2 / `infrastructure_error`: missing executable, bad database,
   incomplete XML, parsing/compiler configuration failure or tool crash.
 
-Counts are diagnostic occurrences; a header may be reported in several
-translation units. Findings are not automatically called defects. Compare
-with [the initial triage](code_quality_findings.md), reproduce suspected
-defects, and use separate `bugfix/` branches. An existing warning remains
-visible and can keep the advisory static-analysis job red. Missing tools
-or unusable reports must not be treated as a successful analysis.
+Counts distinguish occurrences from unique diagnostics: a header may be
+reported in several translation units. All raw logs, YAML/XML and normalized
+`diagnostics.json` remain in the artifacts, including known warnings. The
+summary lists known, new and missing IDs; `result.json` contains the complete
+comparison. `invocations.json` records source scope and native exit codes.
+Findings are not automatically called defects; use the
+[initial triage](code_quality_findings.md) and separate `bugfix/` branches.
+
+### Static-analysis baseline
+
+[`tools/quality-baseline.json`](../tools/quality-baseline.json) contains six
+explicit identities for the twelve original occurrences (nine clang-tidy,
+three cppcheck). The baseline changes only the wrapper's acceptance decision:
+native warning/error diagnostics are neither disabled nor removed. Known-only
+runs are green; any new identity fails. Disappeared entries are reported for
+cleanup but do not fail an otherwise complete run. No GitHub permissions or
+required-check names change.
+
+Identities use exact tool/rule, relative file path, message, severity, lexical
+source context, enclosing brace scopes and occurrence within identical code.
+Source comments, inter-token whitespace, absolute checkout paths, line numbers
+and byte offsets are not identity fields. A separate digest covers anchored
+analysis notes/paths or cppcheck symbols and details, so different traces at
+the same expression do not silently match. Duplicate reports of the same
+diagnostic across translation units share an identity and remain as separate
+occurrences in the artifact.
+
+The source anchor is conservative, not a C++ semantic parser. Structural code
+changes, changed messages/traces or a tool update can legitimately produce new
+IDs that need review. Unmappable or ambiguous report locations, malformed
+reports, compiler failures and crashes fail as infrastructure errors; there
+is no fallback to file/rule-only matching. All expected host translation units
+must be present. clang-tidy YAML must match the current unit and displayed
+diagnostic count; stale YAML is removed before invocation. A clean clang-tidy
+unit normally produces no YAML. cppcheck must report completed file progress
+and valid XML. No disappeared-entry comparison is claimed for incomplete runs.
+
+To update the baseline after fixing a defect:
+
+1. Run both analyzers with the normal commands above. Inspect the full logs
+   and `result.json`; verify that analysis completed and no unexpected new
+   diagnostics appeared.
+2. Review `baseline.missing` / the **missing** summary entries and remove only
+   the corresponding entries from the versioned baseline. Do not regenerate
+   the baseline wholesale or automatically accept all current output.
+3. If a code/tool change shifted an unchanged diagnostic's identity, inspect
+   both its old entry and the new `diagnostics.json` record, including the raw
+   trace. A reviewed update copies that record's exact `id` and `identity`
+   and retains an explicit `reason`. New defects require a separate triage
+   decision; a green job alone is not grounds to add them.
+4. Run the infrastructure tests and both analyzers again. Confirm expected
+   known/new/missing counts, review the baseline diff, and include the narrow
+   baseline removal/update with its bugfix or tool-maintenance PR.
+
+For an isolated review, `--baseline path/to/candidate.json` selects another
+baseline without overwriting the repository file. Schema, duplicate keys,
+duplicate IDs and identity hashes are validated. Missing tools, truncated or
+unusable reports must never be turned into baseline-accepted results.
 
 ## CodeQL
 

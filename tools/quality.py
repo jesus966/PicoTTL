@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Reproducible host analysis and report scoping; no production fixes.
 
-Exit codes: 0 clean/report generated, 1 analyzer findings, 2 infrastructure
-or invalid input. Requires only Python's standard library and the named tool.
+Exit codes: 0 clean/known findings/report generated, 1 new analyzer findings,
+2 infrastructure or invalid input. clang-tidy reports also require PyYAML.
 """
 # Copyright (c) 2026 Jesús Fernández Gamito
 # SPDX-License-Identifier: MIT
@@ -52,11 +52,18 @@ def run(command, log):
 
 
 def static_analysis(args):
+    from quality_baseline import Diagnostics, compare, load_baseline
+
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     status = "infrastructure_error"
     diagnostics = 0
+    records = []
+    invocations = []
+    comparison = None
+    baseline_path = getattr(args, "baseline", ROOT / "tools/quality-baseline.json")
     try:
+        baseline = load_baseline(baseline_path)
         database = json.loads((args.build_dir / "compile_commands.json")
                               .read_text(encoding="utf-8"))
         if not isinstance(database, list) or any(
@@ -79,28 +86,44 @@ def static_analysis(args):
                 entries.append((entry, path.resolve()))
         if not entries:
             raise ValueError("No own host production sources in compilation database")
+        sources = [path.relative_to(ROOT).as_posix() for _, path in entries]
+        if (set(sources) != PORTABLE_SOURCES | DEVICE_SOURCES
+                or len(sources) != len(set(sources))):
+            raise ValueError("Incomplete or duplicate host analysis source manifest")
         filtered = output / "compile_commands.json"
         filtered.write_text(json.dumps([entry for entry, _ in entries], indent=2),
                             encoding="utf-8")
         executable = args.executable or args.tool
+        structured = Diagnostics(ROOT)
         with (output / "analysis.log").open("w", encoding="utf-8") as log:
             version = run([executable, "--version"], log)
             if version.returncode:
                 raise RuntimeError("Tool version query failed")
             if args.tool == "clang-tidy":
-                infrastructure = False
+                # A clean unit normally has no export-fixes file. Remove old
+                # files first so a prior run can never supply its diagnostics.
+                for index in range(len(entries)):
+                    (output / f"fixes-{index}.yaml").unlink(missing_ok=True)
                 for index, (_, source) in enumerate(entries):
+                    fixes = output / f"fixes-{index}.yaml"
                     result = run([executable, str(source), "-p", str(filtered.parent),
                                   "--config-file=" + str(ROOT / ".clang-tidy"),
-                                  "--export-fixes=" + str(output / f"fixes-{index}.yaml")], log)
-                    count = len(re.findall(r": (?:warning|error):", result.stdout))
+                                  "--export-fixes=" + str(fixes)], log)
+                    count = len(re.findall(r": (?:warning|error|remark):", result.stdout))
                     diagnostics += count
+                    invocations.append({"source": sources[index],
+                                        "returncode": result.returncode,
+                                        "displayed_diagnostics": count,
+                                        "report": fixes.name if fixes.exists() else None})
                     if (result.returncode not in (0, 1)
                             or "[clang-diagnostic-error]" in result.stdout
                             or (result.returncode and not count)):
-                        infrastructure = True
-                status = ("infrastructure_error" if infrastructure else
-                          "findings" if diagnostics else "clean")
+                        raise RuntimeError(f"clang-tidy failed/incomplete for {source}")
+                    unit = structured.clang(fixes, source, count)
+                    for record in unit:
+                        record["translation_unit"] = sources[index]
+                        record["report"] = fixes.name
+                    records.extend(unit)
             else:
                 result = subprocess.run(
                     [executable, "--project=" + str(filtered),
@@ -110,31 +133,52 @@ def static_analysis(args):
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
                 log.write(result.stdout + result.stderr)
                 xml = result.stderr
-                parsed = ET.fromstring(xml)
-                if (parsed.tag != "results" or parsed.get("version") != "2"
-                        or parsed.find("errors") is None):
-                    raise RuntimeError("cppcheck did not produce a version 2 results report")
-                errors = parsed.findall("./errors/error")
-                diagnostics = len(errors)
                 (output / "cppcheck.xml").write_text(xml, encoding="utf-8")
-                infrastructure = any(e.get("id") in {
-                    "internalError", "syntaxError", "preprocessorErrorDirective"
-                } for e in errors)
-                status = ("infrastructure_error" if infrastructure or result.returncode not in (0, 1)
-                          or (result.returncode and not errors) else
-                          "findings" if errors else "clean")
-    except (OSError, ValueError, RuntimeError, ET.ParseError) as error:
+                invocations.append({"sources": sources, "returncode": result.returncode,
+                                    "report": "cppcheck.xml"})
+                if result.returncode not in (0, 1):
+                    raise RuntimeError("cppcheck failed or crashed")
+                records = structured.cppcheck(xml, result.stdout, len(entries))
+                diagnostics = len(records)
+                if result.returncode and not records:
+                    raise RuntimeError("cppcheck failed without diagnostics")
+        comparison = compare(args.tool, records, baseline)
+        status = ("new_findings" if comparison["new"] else
+                  "known_findings" if records else "clean")
+    except (ImportError, OSError, ValueError, TypeError, KeyError, AttributeError,
+            RuntimeError, ET.ParseError) as error:
         (output / "infrastructure-error.txt").write_text(str(error), encoding="utf-8")
         print(error, file=sys.stderr)
-    report = {"tool": args.tool, "status": status, "diagnostics": diagnostics}
+    report = {"tool": args.tool, "status": status, "diagnostics": diagnostics,
+              "baseline_evaluated": comparison is not None, "baseline": comparison}
     (output / "result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    (output / "diagnostics.json").write_text(json.dumps(records, indent=2), encoding="utf-8")
+    (output / "invocations.json").write_text(json.dumps(invocations, indent=2), encoding="utf-8")
+    details = "Baseline not evaluated: analysis was incomplete or invalid.\n"
+    if comparison is not None:
+        details = (f"Unique diagnostics: {comparison['unique_diagnostics']}; "
+                   f"known: {len(comparison['known'])}; new: {len(comparison['new'])}; "
+                   f"missing baseline entries: {len(comparison['missing'])}.\n")
+        current = {record["id"]: record for record in records}
+        for label in ("known", "new", "missing"):
+            entries = ([current[key] for key in comparison["known"]]
+                       if label == "known" else comparison[label])
+            for entry in entries:
+                identity = entry["identity"]
+                details += (f"\n- **{label}** `{entry['id']}`: "
+                            f"`{identity['path']}` / `{identity['check']}`: "
+                            f"{identity['message']}\n")
     (output / "summary.md").write_text(
         f"### {args.tool}\n\nStatus: **{status}**; diagnostics: {diagnostics}.\n\n"
-        "See the artifact for the complete log. Findings require triage; this\n"
-        "does not classify them as new defects or accepted baseline warnings.\n",
+        + details + "\nAll raw diagnostics remain in the artifact. "
+        "Known findings are tracked, not suppressed or fixed.\n",
         encoding="utf-8")
-    print(json.dumps(report))
-    return {"clean": 0, "findings": 1, "infrastructure_error": 2}[status]
+    console = {key: report[key] for key in ("tool", "status", "diagnostics", "baseline_evaluated")}
+    if comparison is not None:
+        console.update({key: len(comparison[key]) for key in ("known", "new", "missing")})
+    print(json.dumps(console))
+    return {"clean": 0, "known_findings": 0, "new_findings": 1,
+            "infrastructure_error": 2}[status]
 
 
 def coverage(args):
@@ -223,6 +267,7 @@ def main():
     analyzer.add_argument("tool", choices=("clang-tidy", "cppcheck"))
     analyzer.add_argument("--build-dir", type=Path, required=True)
     analyzer.add_argument("--executable")
+    analyzer.add_argument("--baseline", type=Path, default=ROOT / "tools/quality-baseline.json")
     analyzer.set_defaults(function=static_analysis)
     for command, function in (("coverage", coverage), ("sarif", sarif)):
         sub = commands.add_parser(command)

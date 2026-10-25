@@ -79,9 +79,10 @@ jobs:
       - name: Install static analyzers
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build g++-13 clang-tidy-18 cppcheck
+          sudo apt-get install -y cmake ninja-build g++-13 clang-tidy-18 cppcheck python3-yaml
           clang-tidy-18 --version
           cppcheck --version
+          python3 -c "import yaml; print('PyYAML', yaml.__version__)"
       - name: Configure host compilation database
         id: configure
         run: cmake -S tests -B build-static -G Ninja -DCMAKE_CXX_COMPILER=g++-13 -DCMAKE_BUILD_TYPE=Debug

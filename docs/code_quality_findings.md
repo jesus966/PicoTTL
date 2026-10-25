@@ -1,8 +1,11 @@
 # Initial quality triage
 
 These findings predate the quality-infrastructure branch. No production
-fixes or baseline suppressions are included. This is a triage record, not
-an automatically accepted allowlist. Refresh it when tools or scope change.
+fixes or diagnostic suppressions are included. This triage record explains
+the exact entries in `tools/quality-baseline.json`; known diagnostics remain
+visible and new diagnostics fail the static-analysis job. Baseline acceptance
+does not mark a defect as resolved. Refresh both records after reviewed fixes
+or tool/scope changes, following `docs/code_quality.md`.
 
 ## Confirmed arithmetic defect: timing frequency denominator
 
