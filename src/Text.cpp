@@ -9,6 +9,7 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <limits>
 
 #include "picottl/Color.hpp"
 #include "picottl/Graphics.hpp"
@@ -94,6 +95,12 @@ void Text::putChar(char c) {
     if (column_ >= columns()) {
         newline(); // Wrap at the right edge.
     }
+    // Cells are grid-aligned, so any negative column/row is wholly
+    // invisible. Clip before multiplying user-provided cursor values.
+    if (column_ < 0 || row_ < 0 || row_ >= rows()) {
+        ++column_; // Negative columns advance; nonnegative ones are < columns().
+        return;
+    }
     const std::int32_t cellX = column_ * font_->glyphWidth;
     const std::int32_t cellY = row_ * font_->glyphHeight;
     // Byte -> glyph index: identity for single-byte code pages (fonts
@@ -174,7 +181,11 @@ void Text::scroll(std::int32_t lines) {
 
 void Text::newline() {
     column_ = 0;
-    ++row_;
+    // The public cursor type cannot represent a row beyond INT32_MAX.
+    // Saturate there; output remains clipped rather than wrapping into view.
+    if (row_ < std::numeric_limits<std::int32_t>::max()) {
+        ++row_;
+    }
 }
 
 void Text::fillPixelRows(std::int32_t y, std::int32_t pixelRows) {

@@ -87,3 +87,4 @@ endif()
 
 enable_testing()
 add_test(NAME picottl_host_tests COMMAND picottl_tests)
+set_tests_properties(picottl_host_tests PROPERTIES TIMEOUT 30)
