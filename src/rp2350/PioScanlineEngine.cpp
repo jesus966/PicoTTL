@@ -355,7 +355,7 @@ bool PioScanlineEngine::isRunning() const {
 
 bool PioScanlineEngine::buildTimingBuffer(const VideoTiming& timing) {
     const std::size_t required = timingWordsFor(timing);
-    if (config_.timingBuffer == nullptr || config_.timingBufferWords < required) {
+    if (required == 0 || config_.timingBuffer == nullptr || config_.timingBufferWords < required) {
         return false;
     }
 

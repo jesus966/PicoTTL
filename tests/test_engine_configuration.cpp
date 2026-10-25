@@ -490,6 +490,33 @@ PICOTTL_TEST(engineClockRejectionStopsOutputAndAllowsRecovery) {
     CHECK_EQ(sdk::recording.floatEndpointCalls, 0u);
 }
 
+PICOTTL_TEST(engineRejectsEmptyFramesAndRecoversWithoutRejectingZeroReportedRate) {
+    sdk::reset(); Fixture f;
+    HardwareScanlineEngine engine(f.config());
+    auto empty = timing;
+    empty.vActive = empty.vFrontPorch = empty.vSyncWidth = empty.vBackPorch = 0;
+    CHECK(!engine.configure(empty));
+    CHECK_EQ(sdk::recording.calls, 0u); // reject before acquiring hardware
+    checkRejectedStart(engine);
+    CHECK(engine.configure(timing)); CHECK(engine.start());
+    const auto dividerCalls = sdk::recording.dividerCalls;
+    CHECK(!engine.configure(empty));
+    CHECK_EQ(sdk::recording.dividerCalls, dividerCalls);
+    checkQuiescent(3);
+    checkRejectedStart(engine);
+    engine.stop(); engine.stop();
+
+    auto slow = timing;
+    slow.pixelClockHz = 2000;
+    slow.hActive = slow.hFrontPorch = slow.hSyncWidth = slow.hBackPorch = UINT16_MAX;
+    slow.vActive = 11; // 14 lines, within the fixture's timing-table capacity.
+    CHECK_EQ(slow.lineFrequencyHz(), 0u);
+    CHECK_EQ(slow.refreshRateMilliHz(), 0u);
+    CHECK(engine.configure(slow)); CHECK(engine.start());
+    engine.stop();
+    CHECK(engine.configure(timing)); CHECK(engine.start());
+}
+
 PICOTTL_TEST(engineStandardModeClockDividersRemainUnchanged) {
     struct Case { const VideoTiming* mode; std::uint32_t system; unsigned depth; float expected; };
     const Case cases[] = {

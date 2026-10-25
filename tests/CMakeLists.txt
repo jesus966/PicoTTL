@@ -47,6 +47,7 @@ add_executable(picottl_tests
     test_ansi_terminal.cpp
     test_framebuffer_lifecycle.cpp
     test_dma_stop.cpp
+    test_video_timing.cpp
     test_engine_configuration.cpp
     ${PICOTTL_HOST_ENGINE_SOURCE}
     # Real backend lifecycle code, linked to a recording engine instead
