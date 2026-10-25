@@ -67,7 +67,7 @@ public:
         return true;
     }
 
-    /// Stops video output.
+    /// Stops video output; the current drawing surface remains bound.
     void end() {
         device_.end();
     }
@@ -106,10 +106,16 @@ public:
 
     /// Rebinds the pixel storage while output is inactive (end()
     /// first). Mode changes and framebuffer changes are independent
-    /// operations; the next begin() validates the combination and
-    /// rebinds graphics() to the new surface.
+    /// operations; the next begin() validates the combination. On acceptance,
+    /// graphics() immediately follows the device's new surface (nullptr
+    /// makes drawing inert). A rejected change leaves its binding unchanged.
+    /// Retained Graphics references and Text using them keep the same context.
     bool setFramebuffer(Framebuffer* framebuffer) {
-        return device_.setFramebuffer(framebuffer);
+        if (!device_.setFramebuffer(framebuffer)) {
+            return false;
+        }
+        graphics_ = Graphics(device_.surface());
+        return true;
     }
 
     /// Drawing primitives over this display's surface. When the backend

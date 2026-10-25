@@ -238,6 +238,22 @@ Safe destruction order is therefore the reverse of construction:
 `Text`/`Graphics` -> `DisplaySurface` -> `Display` -> backend device ->
 framebuffer memory.
 
+`Display` keeps one drawing context for its lifetime. An accepted
+`Display::setFramebuffer()` immediately binds that context to the backend's
+current surface; detaching binds it to null and makes drawing inert, without
+requiring another `begin()`. Rejected framebuffer changes leave the binding
+unchanged. `end()` preserves it, and a failed `begin()` leaves it unchanged;
+a successful `begin()` also synchronizes it with the backend's surface.
+Mode compatibility is still validated by `begin()`, independently of CPU drawing.
+
+References to `display.graphics()` retain their identity, and `Text` using
+that context follows its binding. After an accepted replacement or detachment,
+the retired framebuffer can be destroyed once no other consumer uses it.
+Independently constructed `Graphics` contexts still require their own surface
+to remain alive. Make framebuffer changes through `Display::setFramebuffer()`
+when using its drawing context: direct backend changes bypass this synchronization.
+No ownership is transferred, and framebuffer memory must outlive its wrapper.
+
 ## 6. Error handling policy (project-wide)
 
 - **Never throw exceptions.** The framework is compatible with
