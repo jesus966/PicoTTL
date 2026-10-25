@@ -1,0 +1,80 @@
+# PicoTTL release notes. Preserve the curated v1.0.0 entry with --prepend;
+# do not regenerate the historical CHANGELOG.md from scratch.
+# SPDX-License-Identifier: MIT
+
+[changelog]
+# Use the existing introduction's last line as the prepend boundary. Unlike
+# matching the whole header, this works with both LF and CRLF checkouts.
+header_marker = "(see [docs/api_evolution.md](docs/api_evolution.md))."
+header = """
+# Changelog
+
+All notable changes to PicoTTL are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
+with one deliberate strengthening: the public API is **frozen from the
+first release** - additive evolution only, regardless of major version
+(see [docs/api_evolution.md](docs/api_evolution.md)).
+
+"""
+body = """
+{% if commits | length > 0 %}
+{% if version %}\
+## [{{ version | trim_start_matches(pat="v") }}](https://github.com/jesus966/PicoTTL/releases/tag/{{ version }}) - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## [Unreleased]
+{% endif %}
+{% set_global seen = [] %}\
+{% for group, changes in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim }}
+
+{% for commit in changes %}\
+{% set scope = commit.scope | default(value="") %}\
+{% set key = group ~ ":" ~ scope ~ ":" ~ commit.message %}\
+{% if key not in seen %}\
+{% set_global seen = seen | concat(with=[key]) %}\
+- {% if scope %}**{{ scope }}:** {% endif %}{% if commit.breaking %}**Compatibility warning:** {% endif %}{{ commit.message | upper_first }}
+{% endif %}\
+{% endfor %}
+{% endfor %}\
+{% endif %}
+"""
+trim = true
+postprocessors = [{ pattern = '\n{3,}', replace = "\n\n" }]
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+# Historical non-conventional commits remain untouched and are filtered.
+require_conventional = false
+split_commits = false
+protect_breaking_commits = true
+filter_commits = true
+# A squash PR suffix is not part of the user-facing description. Removing
+# it also lets the template deduplicate repeated changes within a release.
+commit_preprocessors = [
+    { pattern = '(?m) \(#[0-9]+\)$', replace = "" },
+]
+commit_parsers = [
+    { message = '^(Merge|merge)\b', skip = true },
+    { message = '^chore(?:\([^)]*\))?: sync (?:main|develop)\b', skip = true },
+    { field = "breaking", pattern = "true", group = "<!-- 3 -->Compatibility" },
+    { footer = '(?i)^Changelog:\s*skip$', skip = true },
+    # Any type can opt into release notes through a Conventional Commit footer.
+    { footer = '(?i)^Changelog:\s*compatibility$', group = "<!-- 3 -->Compatibility" },
+    { footer = '(?i)^Changelog:\s*documentation$', group = "<!-- 4 -->Documentation" },
+    { footer = '(?i)^Changelog:\s*changed$', group = "<!-- 5 -->Changed" },
+    { message = '^feat(?:\([^)]*\))?!?:', group = "<!-- 0 -->Features" },
+    { message = '^fix(?:\([^)]*\))?!?:', group = "<!-- 1 -->Bug Fixes" },
+    { message = '^perf(?:\([^)]*\))?!?:', group = "<!-- 2 -->Performance" },
+    { message = '^docs\((?:api|integration|usage)\)!?:', group = "<!-- 4 -->Documentation" },
+    # Internal work is classified but omitted unless explicitly opted in above.
+    { message = '^(?:refactor|test|docs|build|ci|chore)(?:\([^)]*\))?!?:', skip = true },
+]
+# Match v1.0.0 and future SemVer tags, including prereleases/build metadata.
+# No automatic version bump, tag creation or publication is configured.
+tag_pattern = '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$'
+use_branch_tags = true
+topo_order = true
+sort_commits = "oldest"

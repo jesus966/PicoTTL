@@ -151,6 +151,11 @@ bool MdaDisplayDevice::setFramebuffer(Framebuffer* framebuffer) {
     if (active_) {
         return false;
     }
+    // Retire the old source before its caller-owned storage can disappear.
+    // begin() binds the replacement, if any, after validating it.
+    if (!engine_.setPixelSource(nullptr, 0)) {
+        return false;
+    }
     framebuffer_ = framebuffer;
     return true;
 }
