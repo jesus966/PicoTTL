@@ -14,6 +14,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 
 namespace picottl {
 
@@ -60,14 +61,31 @@ struct VideoTiming {
     }
 
     /// Horizontal scan rate in Hz (rounded down).
+    /// Returns zero if the horizontal total is zero. Zero can also be a
+    /// legitimate rounded result, so it is not an unambiguous error indicator.
     constexpr std::uint32_t lineFrequencyHz() const {
-        return pixelClockHz / hTotal();
+        const std::uint32_t total = hTotal();
+        if (total == 0) {
+            return 0;
+        }
+        return pixelClockHz / total;
     }
 
     /// Vertical refresh rate in millihertz (rounded down).
+    /// Returns zero if either total is zero or the rounded result exceeds
+    /// uint32_t. Zero can also be a legitimate rounded result, so it is not
+    /// an unambiguous error indicator. Neither helper validates hardware timing.
     constexpr std::uint32_t refreshRateMilliHz() const {
-        return static_cast<std::uint32_t>(
-            (static_cast<std::uint64_t>(pixelClockHz) * 1000u) / (hTotal() * vTotal()));
+        const std::uint64_t framePixels = static_cast<std::uint64_t>(hTotal()) * vTotal();
+        if (framePixels == 0) {
+            return 0;
+        }
+        const std::uint64_t frequency =
+            (static_cast<std::uint64_t>(pixelClockHz) * 1000u) / framePixels;
+        if (frequency > std::numeric_limits<std::uint32_t>::max()) {
+            return 0;
+        }
+        return static_cast<std::uint32_t>(frequency);
     }
 };
 
