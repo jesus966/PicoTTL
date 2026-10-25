@@ -1,0 +1,9 @@
+# Host production code only; tool entry points and scope are in tools/quality.py.
+# SPDX-License-Identifier: MIT
+# Coordinate and color arguments intentionally share types in the frozen API;
+# the parameter-order heuristic is not useful evidence of a defect here.
+Checks: '-*,clang-analyzer-*,bugprone-*,performance-*,portability-*,-bugprone-easily-swappable-parameters'
+WarningsAsErrors: '*'
+HeaderFilterRegex: '(^|[/\\])include[/\\]picottl[/\\]'
+SystemHeaders: false
+FormatStyle: none

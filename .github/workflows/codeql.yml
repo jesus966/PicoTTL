@@ -1,0 +1,61 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main, develop, 'release/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  codeql-host:
+    name: CodeQL C++ host
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++-13
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: c-cpp
+          build-mode: manual
+          config-file: .github/codeql/codeql-config.yml
+      # A fresh build must occur inside tracing; reusing CI objects would
+      # leave the CodeQL database incomplete. No Pico SDK or ARM compiler.
+      - name: Compile host target under CodeQL tracing
+        run: |
+          cmake -S tests -B build-codeql -G Ninja -DCMAKE_CXX_COMPILER=g++-13 -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build-codeql --parallel 2
+      - name: Analyze host C++
+        id: analyze
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:cpp/host
+          output: reports/codeql/raw
+          upload: false
+      - name: Scope findings to own host production code
+        run: python3 tools/quality.py sarif --input reports/codeql/raw/cpp.sarif --output-dir reports/codeql/scoped
+      - name: Upload code scanning results
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: reports/codeql/scoped/host.sarif
+          category: /language:cpp/host
+      - name: Retain raw and scoped CodeQL reports
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: codeql-host-sarif
+          path: reports/codeql/
+          if-no-files-found: error
+          retention-days: 14

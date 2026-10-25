@@ -1,0 +1,6 @@
+name: PicoTTL host C++
+queries:
+  - uses: security-extended
+# Manual compilation controls extraction scope. paths-ignore would not
+# exclude compiled C++ here. Report filtering is explicit in tools/quality.py;
+# both the unfiltered and scoped SARIF are retained as artifacts.
