@@ -90,6 +90,11 @@ cmake --build build-host
 - The Pico build must also compile cleanly:
   `cmake -S . -B build -G Ninja && cmake --build build`.
 
+Host sanitizers, coverage, clang-tidy and cppcheck are documented in
+[docs/code_quality.md](docs/code_quality.md), including the initial advisory
+check policy and the limits of host-only analysis. Do not apply sanitizer
+options to the firmware build or automatically fix production findings.
+
 ## Coding style
 
 Match the surrounding code; in particular:

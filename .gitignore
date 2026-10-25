@@ -3,3 +3,7 @@ build
 /build-host
 *.pyc
 __pycache__/
+/build-quality/
+/build-static/
+/build-codeql/
+/reports/

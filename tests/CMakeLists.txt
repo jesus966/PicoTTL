@@ -18,6 +18,16 @@ project(picottl_tests CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Host-only instrumentation. These options never affect the firmware target.
+option(PICOTTL_ENABLE_SANITIZERS "Enable host Address/UndefinedBehaviorSanitizer" OFF)
+option(PICOTTL_ENABLE_COVERAGE "Enable host gcov instrumentation" OFF)
+if(PICOTTL_ENABLE_SANITIZERS OR PICOTTL_ENABLE_COVERAGE)
+    if(CMAKE_CROSSCOMPILING OR NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
+        message(FATAL_ERROR "Host instrumentation requires a native GCC or Clang build")
+    endif()
+endif()
 
 add_executable(picottl_tests
     framework/test.cpp
@@ -60,3 +70,18 @@ if(MSVC)
 else()
     target_compile_options(picottl_tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+
+if(PICOTTL_ENABLE_SANITIZERS)
+    target_compile_options(picottl_tests PRIVATE
+        -fsanitize=address,undefined -fno-omit-frame-pointer
+        -fno-sanitize-recover=all)
+    target_link_options(picottl_tests PRIVATE -fsanitize=address,undefined)
+endif()
+
+if(PICOTTL_ENABLE_COVERAGE)
+    target_compile_options(picottl_tests PRIVATE --coverage -O0 -g)
+    target_link_options(picottl_tests PRIVATE --coverage)
+endif()
+
+enable_testing()
+add_test(NAME picottl_host_tests COMMAND picottl_tests)
