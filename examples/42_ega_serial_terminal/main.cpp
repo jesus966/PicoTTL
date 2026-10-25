@@ -104,7 +104,7 @@ int main() {
     config.secondaryRedPin = 21;
     config.framebuffer = &framebuffer;
 
-    picottl::rp2350::EgaDisplayDevice device(config);
+    static picottl::rp2350::EgaDisplayDevice device(config);
     picottl::Display display(device);
     picottl::Text text(display.graphics(), picottl::fonts::kIbmEga8x14);
     picottl::Terminal terminal(text, gCells, sizeof gCells / sizeof gCells[0]);

@@ -166,7 +166,7 @@ int main() {
     config.pixelPins[1] = 20; // INTENSITY
     config.framebuffer = &framebuffer;
 
-    picottl::rp2350::MdaDisplayDevice device(config);
+    static picottl::rp2350::MdaDisplayDevice device(config);
     picottl::Display display(device);
 
     // Managed (family) mode: both datasets linked, CP437 active.

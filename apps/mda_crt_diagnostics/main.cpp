@@ -210,7 +210,7 @@ int main() {
     config.pixelPins[1] = 20; // INTENSITY
     config.framebuffer = framebufferFor(VideoMode::IbmMda);
 
-    rp2350::MdaDisplayDevice device(config);
+    static rp2350::MdaDisplayDevice device(config);
     Display display(device);
     Text text(display.graphics(), fonts::kIbmMda9x14);
 

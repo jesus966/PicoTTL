@@ -57,7 +57,7 @@ int main() {
                          // once a framebuffer is attached - leave it
                          // unwired in future examples too.
 
-    picottl::rp2350::EgaDisplayDevice device(config);
+    static picottl::rp2350::EgaDisplayDevice device(config);
     picottl::Display display(device);
 
     const bool ok = display.begin(picottl::VideoMode::IbmEga350);
