@@ -2,8 +2,9 @@
 #
 # A standalone desktop build: compiles the platform-independent framework
 # sources plus the host backend and runs the automated regression tests.
-# RP2350 device lifecycle code is tested with a recording engine; the real
-# scanline engine and all Pico SDK hardware code are excluded from this build.
+# RP2350 devices use a recording engine. The real engine's control flow is
+# also compiled under a distinct name against a recording SDK boundary.
+# No real Pico SDK code, MMIO, PIO execution or DMA transfers run on host.
 # The private DMA stop-order helper is exercised with recording callbacks.
 # No Pico SDK, no external libraries - plain C++17.
 #
@@ -30,6 +31,12 @@ if(PICOTTL_ENABLE_SANITIZERS OR PICOTTL_ENABLE_COVERAGE)
     endif()
 endif()
 
+# Track the canonical implementation as a configure input. Copying it avoids
+# a .cpp include while allowing an isolated SDK boundary and test-only name.
+set(PICOTTL_HOST_ENGINE_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/HardwareScanlineEngine.cpp")
+configure_file(${CMAKE_CURRENT_LIST_DIR}/../src/rp2350/PioScanlineEngine.cpp
+    ${PICOTTL_HOST_ENGINE_SOURCE} COPYONLY)
+
 add_executable(picottl_tests
     framework/test.cpp
     test_packed_framebuffer.cpp
@@ -40,6 +47,8 @@ add_executable(picottl_tests
     test_ansi_terminal.cpp
     test_framebuffer_lifecycle.cpp
     test_dma_stop.cpp
+    test_engine_configuration.cpp
+    ${PICOTTL_HOST_ENGINE_SOURCE}
     # Real backend lifecycle code, linked to a recording engine instead
     # of the hardware implementation. This does not emulate PIO or DMA.
     support/RecordingScanlineEngine.cpp
@@ -61,6 +70,12 @@ add_executable(picottl_tests
     # Host backend.
     ${CMAKE_CURRENT_LIST_DIR}/../src/host/HostDisplayDevice.cpp
 )
+
+# Only the host-compiled engine sees these SDK stand-ins. Portable sources
+# and the existing device recording engine keep their normal include paths.
+set_source_files_properties(${PICOTTL_HOST_ENGINE_SOURCE} PROPERTIES
+    COMPILE_DEFINITIONS "PioScanlineEngine=HardwareScanlineEngine"
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_LIST_DIR}/support/pico_sdk;${CMAKE_CURRENT_LIST_DIR}/../src/rp2350")
 
 target_include_directories(picottl_tests PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}

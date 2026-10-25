@@ -82,6 +82,11 @@ public:
     PioScanlineEngine(const PioScanlineEngine&) = delete;
     PioScanlineEngine& operator=(const PioScanlineEngine&) = delete;
 
+    /// Stops owned hardware and invalidates the previous configuration.
+    /// Every failure stops all owned paths, including newly acquired ones;
+    /// start() returns false until configure() succeeds again.
+    /// Partially acquired resources remain owned for retry or destruction;
+    /// the old timing table/programs are not restored. Calls must be serialized.
     bool configure(const VideoTiming& timing);
     bool start();
     void stop();
