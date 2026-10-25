@@ -8,6 +8,7 @@
 #include "picottl/Graphics.hpp"
 
 #include <cstddef>
+#include <algorithm>
 
 #include "picottl/DisplaySurface.hpp"
 
@@ -19,6 +20,19 @@ namespace {
 // not fit 32 bits, and -INT32_MIN would be undefined.
 constexpr std::int64_t absValue(std::int64_t v) {
     return v < 0 ? -v : v;
+}
+
+// Half-open visible interval. Widen only the endpoint calculation;
+// successful bounds fit the surface's uint16 geometry and int32 loops.
+bool clipSpan(std::int32_t start, std::int32_t length, std::int32_t limit,
+              std::int32_t& first, std::int32_t& end) {
+    if (length <= 0) {
+        return false;
+    }
+    first = std::max<std::int32_t>(start, 0);
+    end = static_cast<std::int32_t>(std::min<std::int64_t>(
+        static_cast<std::int64_t>(start) + length, limit));
+    return first < end;
 }
 
 } // namespace
@@ -48,47 +62,35 @@ void Graphics::drawPixel(std::int32_t x, std::int32_t y, Color color) {
 
 void Graphics::drawHorizontalLine(std::int32_t x, std::int32_t y,
                                   std::int32_t length, Color color) {
-    if (surface_ == nullptr || length <= 0) {
+    if (surface_ == nullptr || y < 0 || y >= height()) {
         return;
     }
-    if (x < 0) { // Clip the part left of the surface.
-        length += x;
-        x = 0;
+    std::int32_t first, end;
+    if (!clipSpan(x, length, width(), first, end)) {
+        return;
     }
-    if (x > UINT16_MAX) {
-        return; // Entirely right of any possible surface.
-    }
-    if (length > 0x10000 - x) {
-        length = 0x10000 - x; // Beyond 65535 clips anyway; also keeps
-    }                         // x + i from overflowing.
-    for (std::int32_t i = 0; i < length; ++i) {
-        drawPixel(x + i, y, color);
+    for (std::int32_t col = first; col < end; ++col) {
+        drawPixel(col, y, color);
     }
 }
 
 void Graphics::drawVerticalLine(std::int32_t x, std::int32_t y,
                                 std::int32_t length, Color color) {
-    if (surface_ == nullptr || length <= 0) {
+    if (surface_ == nullptr || x < 0 || x >= width()) {
         return;
     }
-    if (y < 0) { // Clip the part above the surface.
-        length += y;
-        y = 0;
+    std::int32_t first, end;
+    if (!clipSpan(y, length, height(), first, end)) {
+        return;
     }
-    if (y > UINT16_MAX) {
-        return; // Entirely below any possible surface.
-    }
-    if (length > 0x10000 - y) {
-        length = 0x10000 - y;
-    }
-    for (std::int32_t i = 0; i < length; ++i) {
-        drawPixel(x, y + i, color);
+    for (std::int32_t row = first; row < end; ++row) {
+        drawPixel(x, row, color);
     }
 }
 
 void Graphics::drawLine(std::int32_t x0, std::int32_t y0,
                         std::int32_t x1, std::int32_t y1, Color color) {
-    if (surface_ == nullptr) {
+    if (surface_ == nullptr || width() == 0 || height() == 0) {
         return;
     }
     // Axis-aligned fast paths.
@@ -129,52 +131,88 @@ void Graphics::drawLine(std::int32_t x0, std::int32_t y0,
         return;
     }
 
-    // Bresenham's line algorithm. Deltas and the error term use 64-bit
-    // arithmetic: with full-range int32 endpoints the subtraction alone
-    // overflows 32 bits, and the contract promises safe clipping for
-    // any signed coordinates. Cost is proportional to the major-axis
-    // span even when the segment lies entirely off-screen.
-    const std::int64_t dx = absValue(static_cast<std::int64_t>(x1) - x0);
-    const std::int64_t dy = -absValue(static_cast<std::int64_t>(y1) - y0);
-    const std::int32_t stepX = x0 < x1 ? 1 : -1;
-    const std::int32_t stepY = y0 < y1 ? 1 : -1;
-    std::int64_t error = dx + dy;
-
-    while (true) {
-        drawPixel(x0, y0, color);
-        if (x0 == x1 && y0 == y1) {
+    // Skip invisible major-axis steps without moving the endpoints:
+    // geometric endpoint clipping would change Bresenham's rounding phase.
+    const auto dx = static_cast<std::uint32_t>(
+        absValue(static_cast<std::int64_t>(x1) - x0));
+    const auto dy = static_cast<std::uint32_t>(
+        absValue(static_cast<std::int64_t>(y1) - y0));
+    const bool xMajor = dx >= dy;
+    const std::uint32_t major = xMajor ? dx : dy;
+    const std::uint32_t minor = xMajor ? dy : dx;
+    const std::int32_t majorStart = xMajor ? x0 : y0;
+    const std::int32_t minorStart = xMajor ? y0 : x0;
+    const std::int32_t majorStep = (xMajor ? x0 < x1 : y0 < y1) ? 1 : -1;
+    const std::int32_t minorStep = (xMajor ? y0 < y1 : x0 < x1) ? 1 : -1;
+    const std::int32_t majorLimit = xMajor ? width() : height();
+    const std::int32_t minorLimit = xMajor ? height() : width();
+    const std::int64_t first = std::max<std::int64_t>(0,
+        majorStep > 0 ? -static_cast<std::int64_t>(majorStart)
+                     : static_cast<std::int64_t>(majorStart) - (majorLimit - 1));
+    const std::int64_t last = std::min<std::int64_t>(major,
+        majorStep > 0 ? static_cast<std::int64_t>(majorLimit - 1) - majorStart
+                     : majorStart);
+    if (first > last) {
+        return;
+    }
+    std::uint32_t remainder = major / 2;
+    std::int32_t minorPos = minorStart;
+    if (first != 0) {
+        // k*minor + major/2 fits uint64 for every k <= major, including
+        // full-range int32 deltas. Divide only when skipping initial pixels.
+        const std::uint64_t phase = static_cast<std::uint64_t>(first) * minor + major / 2;
+        remainder = static_cast<std::uint32_t>(phase % major);
+        minorPos = static_cast<std::int32_t>(
+            static_cast<std::int64_t>(minorStart) +
+            minorStep * static_cast<std::int64_t>(phase / major));
+    }
+    std::int32_t majorPos = static_cast<std::int32_t>(majorStart + majorStep * first);
+    const auto steps = static_cast<std::int32_t>(last - first);
+    for (std::int32_t i = 0; i <= steps; ++i) {
+        if (minorPos >= 0 && minorPos < minorLimit) {
+            drawPixel(xMajor ? majorPos : minorPos, xMajor ? minorPos : majorPos, color);
+        }
+        if (i == steps) {
             break;
         }
-        const std::int64_t doubled = 2 * error;
-        if (doubled >= dy) {
-            error += dy;
-            x0 += stepX;
-        }
-        if (doubled <= dx) {
-            error += dx;
-            y0 += stepY;
+        majorPos += majorStep;
+        // Equivalent to remainder += minor with carry, without uint32
+        // overflow. Both coordinates stay between the original endpoints.
+        if (remainder >= major - minor) {
+            remainder -= major - minor;
+            minorPos += minorStep;
+        } else {
+            remainder += minor;
         }
     }
 }
 
 void Graphics::copyRows(std::int32_t srcY, std::int32_t dstY,
                         std::int32_t rowCount) {
-    if (surface_ == nullptr) {
+    if (surface_ == nullptr || rowCount <= 0) {
         return;
     }
-    // Trim the part above the surface, preserving the src->dst offset.
-    if (srcY < 0 || dstY < 0) {
-        const std::int32_t trim = -(srcY < dstY ? srcY : dstY);
+    const std::int32_t h = height();
+    const std::int32_t first = std::min(srcY, dstY);
+    if (first < 0) {
+        // rowCount is positive, so -rowCount is representable. Reject
+        // wholly clipped spans before ever negating a possible INT32_MIN.
+        if (first <= -rowCount) {
+            return;
+        }
+        const std::int32_t trim = -first;
+        // Check before adding trim: the other start could be INT32_MAX.
+        if (srcY >= h - trim || dstY >= h - trim) {
+            return;
+        }
         srcY += trim;
         dstY += trim;
         rowCount -= trim;
     }
-    if (rowCount <= 0 || srcY > UINT16_MAX || dstY > UINT16_MAX) {
+    if (srcY >= h || dstY >= h) {
         return;
     }
-    if (rowCount > UINT16_MAX) {
-        rowCount = UINT16_MAX;
-    }
+    rowCount = std::min(rowCount, h - std::max(srcY, dstY));
     surface_->copyRows(static_cast<std::uint16_t>(srcY),
                        static_cast<std::uint16_t>(dstY),
                        static_cast<std::uint16_t>(rowCount));
@@ -185,18 +223,13 @@ void Graphics::invertRect(std::int32_t x, std::int32_t y,
     if (surface_ == nullptr) {
         return;
     }
-    if (x < 0) {
-        width += x;
-        x = 0;
+    std::int32_t left, right, top, bottom;
+    if (!clipSpan(x, width, surface_->width(), left, right) ||
+        !clipSpan(y, height, surface_->height(), top, bottom)) {
+        return;
     }
-    if (y < 0) {
-        height += y;
-        y = 0;
-    }
-    const std::int32_t maxWidth = surface_->width();
-    const std::int32_t maxHeight = surface_->height();
-    for (std::int32_t row = y; row < y + height && row < maxHeight; ++row) {
-        for (std::int32_t col = x; col < x + width && col < maxWidth; ++col) {
+    for (std::int32_t row = top; row < bottom; ++row) {
+        for (std::int32_t col = left; col < right; ++col) {
             const Color current =
                 surface_->pixel(static_cast<std::uint16_t>(col),
                                 static_cast<std::uint16_t>(row));
@@ -225,17 +258,26 @@ void Graphics::blitBitmap(std::int32_t x, std::int32_t y,
     if (surface_ == nullptr || bitmap.data == nullptr) {
         return;
     }
+    std::int32_t left, right, top, bottom;
+    if (!clipSpan(x, bitmap.width, width(), left, right) ||
+        !clipSpan(y, bitmap.height, height(), top, bottom)) {
+        return;
+    }
+    // A visible bitmap (uint16 dimensions) bounds these differences.
+    const std::int32_t sourceX = left - x;
+    const std::int32_t sourceY = top - y;
     const std::uint16_t stride = bitmap.effectiveStrideBytes();
-    for (std::uint16_t row = 0; row < bitmap.height; ++row) {
+    for (std::int32_t row = 0; row < bottom - top; ++row) {
         const std::uint8_t* rowData =
-            bitmap.data + static_cast<std::size_t>(row) * stride;
-        for (std::uint16_t col = 0; col < bitmap.width; ++col) {
+            bitmap.data + static_cast<std::size_t>(sourceY + row) * stride;
+        for (std::int32_t col = 0; col < right - left; ++col) {
+            const auto bit = static_cast<std::uint32_t>(sourceX + col);
             const bool set =
-                (rowData[col >> 3] & (0x80u >> (col & 7u))) != 0;
+                (rowData[bit >> 3] & (0x80u >> (bit & 7u))) != 0;
             if (set) {
-                drawPixel(x + col, y + row, foreground);
+                drawPixel(left + col, top + row, foreground);
             } else if (opaque) {
-                drawPixel(x + col, y + row, background);
+                drawPixel(left + col, top + row, background);
             }
         }
     }

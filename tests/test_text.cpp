@@ -33,6 +33,88 @@ struct Fixture {
 
 } // namespace
 
+PICOTTL_TEST(textExtremeCursorPositionsClipBeforeGlyphArithmetic) {
+    Fixture f;
+    f.text.setUnderline(true);
+    f.text.setCursor(INT32_MIN, 0);
+    f.text.putChar('A');
+    CHECK_EQ(f.text.cursorX(), INT32_MIN + 1);
+    f.text.setCursor(0, INT32_MIN);
+    f.text.putChar('A');
+    CHECK_EQ(f.text.cursorX(), 1);
+    f.text.setCursor(0, INT32_MAX);
+    f.text.putChar('A');
+    CHECK_EQ(f.text.cursorX(), 1);
+    CHECK_EQ(f.text.cursorY(), INT32_MAX);
+    f.text.print("\n\nA");
+    CHECK_EQ(f.text.cursorY(), INT32_MAX);
+    f.text.setCursor(INT32_MAX, INT32_MAX);
+    f.text.putChar('A'); // right-edge wrap must also saturate the row
+    CHECK_EQ(f.text.cursorX(), 1);
+    CHECK_EQ(f.text.cursorY(), INT32_MAX);
+    for (auto value : f.storage) CHECK_EQ(value, 0);
+}
+
+PICOTTL_TEST(textExtremeRightColumnKeepsExistingWrapSemantics) {
+    Fixture actual, expected;
+    actual.text.setCursor(INT32_MAX, 0);
+    actual.text.putChar('A');
+    expected.text.setCursor(0, 1);
+    expected.text.putChar('A');
+    CHECK_EQ(actual.text.cursorX(), 1);
+    CHECK_EQ(actual.text.cursorY(), 1);
+    CHECK(std::memcmp(actual.storage, expected.storage, sizeof actual.storage) == 0);
+}
+
+PICOTTL_TEST(textExtremeFallbackUnderlineAndNegativeAdvance) {
+    std::uint8_t storage[8] = {};
+    picottl::MonochromeFramebuffer fb(storage, sizeof storage, 8, 8);
+    picottl::Graphics gfx(&fb);
+    const picottl::Font missing{nullptr, 2, 2, 1, 0, 1};
+    picottl::Text text(gfx, missing);
+    text.setUnderline(true);
+    text.setCursor(INT32_MIN, INT32_MAX);
+    text.putChar('A');
+    text.setCursor(0, INT32_MAX);
+    text.putChar('A');
+    for (auto value : storage) CHECK_EQ(value, 0);
+    text.setCursor(-1, 0);
+    text.print("AA"); // first cell is wholly left; second is visible
+    CHECK_EQ(text.cursorX(), 1);
+    CHECK_EQ(fb.pixel(0, 1).index, 1);
+    CHECK_EQ(fb.pixel(1, 1).index, 1);
+    for (std::uint16_t y = 0; y < 8; ++y) {
+        for (std::uint16_t x = 0; x < 8; ++x) {
+            CHECK_EQ(fb.pixel(x, y).index, y == 1 && x < 2 ? 1 : 0);
+        }
+    }
+}
+
+PICOTTL_TEST(textExtremeScrollClearsOnlyWholeGridRows) {
+    std::uint8_t storage[9];
+    std::memset(storage, 0xff, sizeof storage);
+    picottl::MonochromeFramebuffer fb(storage, sizeof storage, 8, 9);
+    picottl::Graphics gfx(&fb);
+    const picottl::Font missing{nullptr, 2, 2, 1, 0};
+    picottl::Text text(gfx, missing);
+    text.scroll(INT32_MIN);
+    for (auto value : storage) CHECK_EQ(value, 0xff);
+    text.scroll(INT32_MAX);
+    for (std::uint16_t y = 0; y < 9; ++y) {
+        for (std::uint16_t x = 0; x < 8; ++x) CHECK_EQ(fb.pixel(x, y).index, y == 8 ? 1 : 0);
+    }
+}
+
+PICOTTL_TEST(textNewlineSaturatesEvenWithoutUsableFont) {
+    picottl::Graphics unbound;
+    const picottl::Font empty{};
+    picottl::Text text(unbound, empty);
+    text.setCursor(INT32_MIN, INT32_MAX);
+    text.putChar('\n');
+    CHECK_EQ(text.cursorX(), 0);
+    CHECK_EQ(text.cursorY(), INT32_MAX);
+}
+
 PICOTTL_TEST(textGridIsDerivedNotAssumed) {
     Fixture f;
     CHECK_EQ(f.text.columns(), 80); // 720 / 9, derived at runtime

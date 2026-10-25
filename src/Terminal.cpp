@@ -101,7 +101,7 @@ void Terminal::clear() {
         return;
     }
     hideCursorOverlay();
-    for (std::int32_t i = 0; i < columns_ * rows_; ++i) {
+    for (std::size_t i = 0; i < cellsFor(columns_, rows_); ++i) {
         cells_[i] = TerminalCell{' ', attributes_};
     }
     text_.setColors(attributes_.foreground, attributes_.background);
@@ -213,7 +213,7 @@ void Terminal::update(std::uint32_t nowMs) {
 }
 
 TerminalCell& Terminal::cellAt(std::int32_t column, std::int32_t row) {
-    return cells_[row * columns_ + column];
+    return cells_[static_cast<std::size_t>(row) * columns_ + column];
 }
 
 void Terminal::renderCell(std::int32_t column, std::int32_t row,
