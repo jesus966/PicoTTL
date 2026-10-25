@@ -701,6 +701,15 @@ peripherals) without any change to the public API.
   clock and snapped to an integer when the pixel clock error stays below
   1 % (e.g. 130 MHz ÷ 8 = 16.25 MHz vs canonical 16.257 MHz), eliminating
   fractional-divider jitter.
+  Configuration requires positive nominal pixel and SDK-reported system
+  frequencies, with their exact ratio in the PIO divider range [1, 65536].
+  The divider has 16 integer and 8 fractional bits; integer/fraction 0/0
+  represents 65536. With a framebuffer, the pixel state machine uses half
+  the selected timing divider, which must also be in range after integer
+  snapping. Unrepresentable clocks are rejected before PIO/DMA setup;
+  as with other configuration failures, the engine remains stopped and
+  requires a successful configuration before starting. The application
+  must keep the system clock stable after configuration and during output.
 - HSYNC and VSYNC must be adjacent GPIOs (a constraint of consecutive PIO
   OUT pins) - validated at configuration time.
 - The pixel path uses a second state machine synchronized to the sync

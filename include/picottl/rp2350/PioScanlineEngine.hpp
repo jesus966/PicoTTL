@@ -114,11 +114,12 @@ public:
 
 private:
     bool buildTimingBuffer(const VideoTiming& timing);
+    bool prepareClockConfig(const VideoTiming& timing);
     bool acquireHardware();
     bool acquirePixelHardware();
     bool preparePixelProgram();
-    bool applyPioConfig();
-    bool applyPixelPioConfig();
+    void applyPioConfig();
+    void applyPixelPioConfig();
     void setupDma();
     void setupPixelDma();
     void driveSignalsIdle();

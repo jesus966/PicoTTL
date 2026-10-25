@@ -2,6 +2,7 @@
 #include "framework/test.hpp"
 #include "support/HardwareScanlineEngine.hpp"
 #include "support/pico_sdk/RecordingPicoSdk.hpp"
+#include "picottl/video/ModeTimings.hpp"
 
 namespace {
 using picottl::rp2350::HardwareScanlineEngine;
@@ -140,7 +141,7 @@ PICOTTL_TEST(enginePixelShapeFailureInvalidatesAllOwnedChannels) {
     checkRejectedStart(engine);
 }
 
-PICOTTL_TEST(engineLatePixelClockFailureRecoversAndRearmsBothPairs) {
+PICOTTL_TEST(enginePixelClockFailureRecoversAndRearmsBothPairs) {
     sdk::reset(); Fixture f;
     {
         HardwareScanlineEngine engine(f.config());
@@ -187,7 +188,7 @@ PICOTTL_TEST(engineInvalidHardwareParametersNeverAcquireResources) {
             CHECK(!engine.configure(timing));
             checkRejectedStart(engine);
         }
-        CHECK_EQ(sdk::recording.calls, 0u);
+        CHECK_EQ(sdk::recording.calls, sdk::recording.clockReads);
         checkReleased();
     }
 }
@@ -351,5 +352,174 @@ PICOTTL_TEST(engineValidPixelDepthsAndDetachKeepTheirLifecycle) {
             CHECK(!sdk::recording.dmaClaimed[9]);
         }
         checkReleased();
+    }
+}
+
+namespace {
+void checkClockRejectedBeforePio(HardwareScanlineEngine& engine) {
+    CHECK_EQ(sdk::recording.calls, sdk::recording.clockReads);
+    CHECK_EQ(sdk::recording.dividerCalls, 0u);
+    CHECK_EQ(sdk::recording.integerDividerCalls, 0u);
+    CHECK_EQ(sdk::recording.gpioConfigurations, 0u);
+    CHECK_EQ(sdk::recording.invalidDividerCalls, 0u);
+    for (uint ch = 0; ch < 4; ++ch) {
+        CHECK(!sdk::recording.dmaClaimed[ch]);
+        CHECK_EQ(sdk::recording.dma[ch].configurations, 0u);
+    }
+    checkRejectedStart(engine);
+}
+} // namespace
+
+PICOTTL_TEST(engineRejectsZeroReportedAndRequestedClocks) {
+    const std::uint32_t clocks[][2] = {{0, 10'000'000}, {130'000'000, 0}, {0, 0}};
+    for (const auto& pair : clocks) {
+        sdk::reset(); Fixture f;
+        sdk::recording.clockHz = pair[0];
+        HardwareScanlineEngine engine(f.config());
+        auto requested = timing; requested.pixelClockHz = pair[1];
+        CHECK(!engine.configure(requested));
+        checkClockRejectedBeforePio(engine);
+    }
+}
+
+PICOTTL_TEST(engineRejectsUnsupportedClockRatiosBeforePioSetup) {
+    const std::uint32_t clocks[][2] = {
+        {99, 100}, {1, UINT32_MAX}, {65'537, 1}, {UINT32_MAX, 1},
+        // A float conversion/division can round these out-of-range ratios
+        // back onto 1 or 65536. Validate the integer frequencies exactly.
+        {16'777'216, 16'777'217}, {65'536'001, 1000}
+    };
+    for (const auto& pair : clocks) {
+        sdk::reset(); Fixture f;
+        sdk::recording.clockHz = pair[0];
+        HardwareScanlineEngine engine(f.config());
+        auto requested = timing; requested.pixelClockHz = pair[1];
+        CHECK(!engine.configure(requested));
+        checkClockRejectedBeforePio(engine);
+    }
+}
+
+PICOTTL_TEST(engineAcceptsClockDividerEndpointsWithoutUnsafeConversion) {
+    struct Case { std::uint32_t system, pixel; float expected; };
+    const Case cases[] = {
+        {1000, 1000, 1}, {UINT32_MAX, UINT32_MAX, 1},
+        {65'535, 1, 65535}, {65'536, 1, 65536},
+        {65'536'000, 1000, 65536}, {UINT32_MAX, 65'536, 65536}
+    };
+    for (const auto& item : cases) {
+        sdk::reset(); Fixture f;
+        sdk::recording.clockHz = item.system;
+        HardwareScanlineEngine engine(f.config());
+        auto requested = timing; requested.pixelClockHz = item.pixel;
+        CHECK(engine.configure(requested));
+        CHECK(sdk::recording.dividers[0][0] == item.expected);
+        CHECK_EQ(sdk::recording.fullPeriodEncoded[0][0], item.expected == 65536);
+        CHECK_EQ(sdk::recording.invalidDividerCalls, 0u);
+        CHECK_EQ(sdk::recording.floatEndpointCalls, 0u);
+        CHECK(engine.start());
+    }
+}
+
+PICOTTL_TEST(enginePreservesFractionalDividersAndIntegerSnapPolicy) {
+    struct Case { std::uint32_t system, pixel; float expected; };
+    const Case cases[] = {
+        {1500, 1000, 1.5f}, {2001, 1000, 2},
+        {538, 256, 2.1015625f}, {1077, 512, 2.103515625f},
+        {101, 100, 1}, {102, 100, 1.02f},
+        {16'777'215, 256, 65536} // largest float below 65536, then integer snap
+    };
+    for (const auto& item : cases) {
+        sdk::reset(); Fixture f;
+        sdk::recording.clockHz = item.system;
+        HardwareScanlineEngine engine(f.config());
+        auto requested = timing; requested.pixelClockHz = item.pixel;
+        CHECK(engine.configure(requested));
+        CHECK(sdk::recording.dividers[0][0] == item.expected);
+        CHECK_EQ(sdk::recording.invalidDividerCalls, 0u);
+        CHECK_EQ(sdk::recording.floatEndpointCalls, 0u);
+    }
+}
+
+PICOTTL_TEST(engineValidatesPixelClockAfterIntegerSnapBeforePioSetup) {
+    struct Case { std::uint32_t system, pixel; float sync, pixels; bool valid; };
+    const Case cases[] = {
+        {198, 100, 2, 1, true}, {200, 100, 2, 1, true},
+        {197, 100, 0, 0, false}, {1500, 1000, 0, 0, false},
+        {65'536, 1, 65536, 32768, true}
+    };
+    for (const auto& item : cases) {
+        sdk::reset(); Fixture f;
+        sdk::recording.clockHz = item.system;
+        HardwareScanlineEngine engine(f.config());
+        CHECK(engine.setPixelSource(f.pixels, 4));
+        auto requested = timing; requested.pixelClockHz = item.pixel;
+        CHECK_EQ(engine.configure(requested), item.valid);
+        if (item.valid) {
+            CHECK(sdk::recording.dividers[0][0] == item.sync);
+            CHECK(sdk::recording.dividers[0][1] == item.pixels);
+            CHECK_EQ(sdk::recording.invalidDividerCalls, 0u);
+            CHECK_EQ(sdk::recording.floatEndpointCalls, 0u);
+            CHECK(engine.start());
+        } else {
+            checkClockRejectedBeforePio(engine);
+        }
+    }
+}
+
+PICOTTL_TEST(engineClockRejectionStopsOutputAndAllowsRecovery) {
+    sdk::reset(); Fixture f;
+    HardwareScanlineEngine engine(f.config());
+    CHECK(engine.setPixelSource(f.pixels, 4));
+    CHECK(engine.configure(timing)); CHECK(engine.start());
+    for (unsigned failure = 0; failure < 3; ++failure) {
+        const auto dividerCalls = sdk::recording.dividerCalls;
+        const auto gpioConfigurations = sdk::recording.gpioConfigurations;
+        auto invalid = timing;
+        sdk::recording.clockHz = failure == 0 ? 0 : 130'000'000;
+        invalid.pixelClockHz = failure == 1 ? 0 : (failure == 2 ? 1 : timing.pixelClockHz);
+        CHECK(!engine.configure(invalid));
+        checkQuiescent(15);
+        checkRejectedStart(engine);
+        CHECK_EQ(sdk::recording.dividerCalls, dividerCalls);
+        CHECK_EQ(sdk::recording.gpioConfigurations, gpioConfigurations);
+        sdk::recording.clockHz = 130'000'000;
+        CHECK(engine.configure(timing)); CHECK(engine.start());
+        CHECK(sdk::recording.dma[2].read == f.pixels);
+    }
+    CHECK_EQ(sdk::recording.invalidDividerCalls, 0u);
+    CHECK_EQ(sdk::recording.floatEndpointCalls, 0u);
+}
+
+PICOTTL_TEST(engineStandardModeClockDividersRemainUnchanged) {
+    struct Case { const VideoTiming* mode; std::uint32_t system; unsigned depth; float expected; };
+    const Case cases[] = {
+        {&picottl::modes::kIbmMda, 130'000'000, 2, 8},
+        {&picottl::modes::kMdaOverscan, 130'000'000, 2, 8},
+        {&picottl::modes::kIbmCga640, 142'800'000, 4, 10},
+        {&picottl::modes::kIbmCga320, 142'800'000, 4, 20},
+        {&picottl::modes::kIbmEga350, 130'000'000, 8, 8},
+        // The default Pico 2 system clock also preserves the existing
+        // fractional dividers, except CGA320 which snaps to 21.
+        {&picottl::modes::kIbmMda, 150'000'000, 2, 150'000'000.0f / 16'257'000.0f},
+        {&picottl::modes::kMdaOverscan, 150'000'000, 2, 150'000'000.0f / 16'257'000.0f},
+        {&picottl::modes::kIbmCga640, 150'000'000, 4, 150'000'000.0f / 14'318'180.0f},
+        {&picottl::modes::kIbmCga320, 150'000'000, 4, 21},
+        {&picottl::modes::kIbmEga350, 150'000'000, 8, 150'000'000.0f / 16'257'000.0f}
+    };
+    alignas(std::uint32_t) static std::uint8_t pixels[224'000];
+    std::uint32_t table[2048];
+    for (const auto& item : cases) {
+        sdk::reset();
+        Fixture f;
+        auto config = f.config(); config.timingBuffer = table; config.timingBufferWords = 2048;
+        HardwareScanlineEngine engine(config);
+        sdk::recording.clockHz = item.system;
+        const auto bytes = static_cast<std::size_t>(item.mode->hActive) * item.mode->vActive * item.depth / 8;
+        CHECK(engine.setPixelSource(pixels, bytes, item.depth, item.depth == 8 ? 6 : item.depth));
+        CHECK(engine.configure(*item.mode)); CHECK(engine.start());
+        CHECK(sdk::recording.dividers[0][0] == item.expected);
+        CHECK(sdk::recording.dividers[0][1] == item.expected / 2);
+        CHECK_EQ(sdk::recording.invalidDividerCalls, 0u);
+        CHECK_EQ(sdk::recording.floatEndpointCalls, 0u);
     }
 }
