@@ -32,7 +32,7 @@ int main() {
     config.dmaControlChannel = 1;
     config.hsyncPin = 2; // VSYNC is on GPIO 3.
 
-    picottl::rp2350::MdaDisplayDevice device(config);
+    static picottl::rp2350::MdaDisplayDevice device(config);
     picottl::Display display(device);
 
     const bool ok = display.begin(picottl::VideoMode::IbmMda);

@@ -92,6 +92,64 @@ Neither a clean sanitizer run nor high coverage establishes physical signal
 timing, DMA quiescence, multicore safety or CRT compatibility. Existing
 host tests do not exhaust all legal API inputs or lifecycle failures.
 
+## Firmware stack measurements
+
+Use the target compiler rather than host stack reports to budget firmware
+stack usage. A separate build keeps measurement artifacts out of normal
+builds. For the SDK's Release optimization settings:
+
+```sh
+cmake -S . -B build/stack -G Ninja -DPICO_BOARD=pico2 \
+  -DCMAKE_BUILD_TYPE=Release \
+  '-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG -g -fstack-usage' \
+  '-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG -g -fstack-usage'
+cmake --build build/stack --parallel 2
+find build/stack -name '*.su' -print
+arm-none-eabi-size build/stack/examples/01_mda_sync/picottl_example_01_mda_sync.elf
+arm-none-eabi-nm -S -C build/stack/examples/01_mda_sync/picottl_example_01_mda_sync.elf
+```
+
+Keep the normal SDK architecture flags: do not replace `CMAKE_C_FLAGS` or
+`CMAKE_CXX_FLAGS` with only `-fstack-usage`. Use the same SDK, compiler,
+optimization, assertion and LTO settings when comparing builds. Different
+optimization levels can change inlining, register spills and call frames.
+With LTO, inspect any link-time `.su` files as well; compile-time reports alone
+can omit or misrepresent the final functions. Check final disassembly too.
+
+Each `.su` record describes a function's own compiler-reported frame, not
+the accumulated stack of its callers, callees and interrupts. Inlined code
+is accounted in the containing frame; out-of-line compiler clones may have
+their own entries. Tail calls do not retain the caller's whole frame.
+Inspect indirect/virtual calls and include SDK routines, assembly and
+precompiled library routines that may have no `.su` record. Add exception
+entry and interrupt nesting appropriate to the actual application. A sum
+over a selected call path is an estimate, not a complete upper bound.
+
+Inspect the ELF/map symbols `__StackTop`, `__StackBottom`, `__StackOneTop`
+and `__StackOneBottom` to determine the actual linker reservations. Pico SDK
+2.3.0 defaults `PICO_STACK_SIZE` to 0x800 bytes; `PICO_CORE1_STACK_SIZE`
+defaults to that value when a default core-1 stack is linked. An unused core
+may have no stack reservation. A custom core-1 launch stack or RTOS task
+stack has its own budget. In the default bare-metal Cortex-M33 execution
+model, foreground code and interrupts use the per-core main stack; there is
+no additional independent interrupt-stack allowance. `__StackLimit` is a
+historical heap-boundary symbol and must not be mistaken for a stack bottom.
+
+A linker reservation is not a measured high-water mark or proof that
+overflow will fault: SDK stack guards are optional. For runtime validation,
+use a debugger or carefully implemented watermark measurement with the
+application's interrupt load. Observe each active core separately. Never
+overwrite live stack contents to install a watermark.
+
+Moving an application-lifetime object out of an automatic frame exposes its
+storage in `.bss` or `.data`; it does not remove the object's RAM requirement.
+Compare both ELF section sizes and symbol sizes. Local static initialization
+can also link a guard and destructor-registration support; check the map
+rather than assuming the RAM/code delta equals only `sizeof(device)`.
+See the [memory policy](architecture.md#7-memory-policy) for ownership and
+lifetime constraints. Static storage does not establish reentrancy or multicore
+safety, and stack reports do not validate physical video signals.
+
 ## Static analysis
 
 Configure once; both analyzers reuse the same compilation database. A

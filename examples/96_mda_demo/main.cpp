@@ -83,7 +83,7 @@ int main() {
     config.pixelPins[1] = 20; // INTENSITY
     config.framebuffer = &framebuffer;
 
-    picottl::rp2350::MdaDisplayDevice device(config);
+    static picottl::rp2350::MdaDisplayDevice device(config);
     picottl::Display display(device);
 
     const bool ok = display.begin(kMode);

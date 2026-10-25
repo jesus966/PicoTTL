@@ -47,7 +47,7 @@ int main() {
                          // once a framebuffer is attached - leave it
                          // unwired in future examples too.
 
-    picottl::rp2350::CgaDisplayDevice device(config);
+    static picottl::rp2350::CgaDisplayDevice device(config);
     picottl::Display display(device);
 
     const bool ok = display.begin(picottl::VideoMode::IbmCga640);

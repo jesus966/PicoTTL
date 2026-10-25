@@ -122,7 +122,7 @@ int main() {
     config.intensityPin = 19;
     config.framebuffer = &gFramebuffers[0];
 
-    picottl::rp2350::CgaDisplayDevice device(config);
+    static picottl::rp2350::CgaDisplayDevice device(config);
     picottl::Display display(device);
 
     bool ok = display.begin(kModes[0]);

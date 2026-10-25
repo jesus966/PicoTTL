@@ -262,9 +262,35 @@ framebuffer memory.
 - **Caller ownership whenever practical** - large buffers (framebuffers)
   are always provided by the application.
 - **Fixed-size internal buffers are acceptable** when they materially
-  simplify the API (e.g. the ~4.4 KB MDA signal table embedded in
+  simplify the API (e.g. the timing table embedded in
   `MdaDisplayDevice`), provided they are documented and visible in the
   map file.
+
+Device objects contain their timing tables, so they are several kilobytes
+rather than small handles. Their storage duration must be included in the
+application's memory budget. A device constructed as an automatic variable
+occupies its caller's stack for its entire lifetime, including while DMA
+is generating video. See the backend memory reference below for table sizes.
+
+For a single device used throughout a firmware's permanent `main()` loop,
+function-local static storage keeps the table out of the stack while
+constructing the object at first use, after the application prepares its
+clock and configuration. Each declaration owns a separate instance; this
+does not make the device shared between cores or its operations thread-safe.
+Do not apply this policy to reentrant functions, short-lived devices or
+factories that require a new instance on each call.
+
+The configuration is copied during construction, but framebuffer descriptors
+and pixel storage remain caller-owned and must outlive every active use.
+A static device must not retain pointers into a scope that has returned.
+The shipped single-core applications keep any automatic framebuffer
+descriptor inside their non-returning `main()`; its pixel storage is static.
+`end()` still stops output, while destruction of a static device belongs to
+program termination rather than block exit. Retain automatic or other
+explicitly owned storage where deterministic scoped destruction is required,
+and budget enough stack for the complete call chain and interrupts.
+Changing a DMA buffer's address can also change SRAM-bank contention;
+validate streaming under the application's CPU/DMA load on hardware.
 
 ## 8. Hardware resource policy
 

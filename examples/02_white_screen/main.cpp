@@ -51,7 +51,7 @@ int main() {
     config.videoPin = 19;
     config.framebuffer = &framebuffer;
 
-    picottl::rp2350::MdaDisplayDevice device(config);
+    static picottl::rp2350::MdaDisplayDevice device(config);
     picottl::Display display(device);
 
     display.surface()->fill(picottl::colors::kWhite);

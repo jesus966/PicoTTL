@@ -61,7 +61,7 @@ int main() {
     config.videoPin = 19; // INTENSITY on GPIO 20 (always videoPin + 1).
     config.framebuffer = &framebuffer;
 
-    picottl::rp2350::MdaDisplayDevice device(config);
+    static picottl::rp2350::MdaDisplayDevice device(config);
     picottl::Display display(device);
 
     picottl::Graphics& gfx = display.graphics();

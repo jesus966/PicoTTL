@@ -271,7 +271,7 @@ int main() {
     config.secondaryRedPin = 21;
     config.framebuffer = framebufferFor(VideoMode::IbmEga350);
 
-    rp2350::EgaDisplayDevice device(config);
+    static rp2350::EgaDisplayDevice device(config);
     Display display(device);
     Text text(display.graphics(), fonts::kIbmEga8x14);
 

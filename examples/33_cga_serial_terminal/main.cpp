@@ -104,7 +104,7 @@ int main() {
     config.intensityPin = 19;
     config.framebuffer = &framebuffer;
 
-    picottl::rp2350::CgaDisplayDevice device(config);
+    static picottl::rp2350::CgaDisplayDevice device(config);
     picottl::Display display(device);
     picottl::Text text(display.graphics(), picottl::fonts::kIbmCga8x8);
     picottl::Terminal terminal(text, gCells, sizeof gCells / sizeof gCells[0]);

@@ -78,7 +78,7 @@ int main() {
     config.secondaryRedPin = 21;
     config.framebuffer = &framebuffer;
 
-    picottl::rp2350::EgaDisplayDevice device(config);
+    static picottl::rp2350::EgaDisplayDevice device(config);
     picottl::Display display(device);
 
     const bool ok = display.begin(kMode);

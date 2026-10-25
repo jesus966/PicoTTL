@@ -244,7 +244,7 @@ int main() {
     config.intensityPin = 19;
     config.framebuffer = framebufferFor(VideoMode::IbmCga640);
 
-    rp2350::CgaDisplayDevice device(config);
+    static rp2350::CgaDisplayDevice device(config);
     Display display(device);
     Text text(display.graphics(), fonts::kIbmCga8x8);
 

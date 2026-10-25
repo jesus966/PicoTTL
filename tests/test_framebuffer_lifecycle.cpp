@@ -298,3 +298,73 @@ PICOTTL_TEST(egaChangesDepthOnSameDevice) {
     changeDepthOnSameDevice<rp2350::EgaDisplayDevice, 8, 4>(
         VideoMode::IbmCga320, VideoMode::IbmEga350);
 }
+
+namespace {
+
+template <typename Device>
+Device& applicationLifetimeDevice(Framebuffer* framebuffer) {
+    // The temporary Config is copied during first-use construction.
+    // Each template instantiation owns a separate device, not shared state.
+    static Device device([framebuffer] {
+        auto config = configFor(static_cast<Device*>(nullptr));
+        config.framebuffer = framebuffer;
+        return config;
+    }());
+    return device;
+}
+
+template <typename Device, unsigned Bpp>
+void exerciseApplicationLifetimeDevice(VideoMode mode, VideoMode signalOnlyMode) {
+    // Descriptors and backing storage outlive the static device's use.
+    static PackedFramebuffer<Bpp> first(storageA, sizeof storageA,
+                                        modeWidth(mode), modeHeight(mode));
+    static PackedFramebuffer<Bpp> replacement(storageB, sizeof storageB,
+                                              modeWidth(mode), modeHeight(mode));
+    Device& device = applicationLifetimeDevice<Device>(&first);
+    Display display(device);
+    CHECK(!device.isActive());
+    CHECK(display.begin(mode));
+    CHECK(engineRecording().startedSource == storageA);
+    const auto starts = engineRecording().starts;
+    CHECK(&applicationLifetimeDevice<Device>(&replacement) == &device);
+    CHECK_EQ(engineRecording().starts, starts);
+    CHECK(engineRecording().startedSource == storageA);
+    display.end();
+
+    for (unsigned cycle = 0; cycle < 3; ++cycle) {
+        CHECK(display.setFramebuffer(&replacement));
+        CHECK(display.begin(mode));
+        CHECK(engineRecording().startedSource == storageB);
+        CHECK_EQ(engineRecording().bitsPerPixel, Bpp);
+        CHECK(!display.setFramebuffer(nullptr)); // rejected while active
+        display.end();
+        display.end();
+        CHECK(!device.isActive());
+        CHECK(display.setFramebuffer(nullptr));
+        CHECK(display.begin(signalOnlyMode));
+        CHECK(engineRecording().startedSource == nullptr);
+        display.end();
+        CHECK(!display.begin(static_cast<VideoMode>(255)));
+        CHECK(!device.isActive());
+    }
+    // Leave every persistent instance inactive and detached before another
+    // test uses the recording engine or the shared host framebuffer storage.
+    CHECK(display.setFramebuffer(nullptr));
+}
+
+} // namespace
+
+PICOTTL_TEST(mdaApplicationLifetimeStorageKeepsLifecycleAndOwnership) {
+    exerciseApplicationLifetimeDevice<rp2350::MdaDisplayDevice, 2>(
+        VideoMode::MdaOverscan, VideoMode::IbmMda);
+}
+
+PICOTTL_TEST(cgaApplicationLifetimeStorageKeepsLifecycleAndOwnership) {
+    exerciseApplicationLifetimeDevice<rp2350::CgaDisplayDevice, 4>(
+        VideoMode::IbmCga640, VideoMode::IbmCga320);
+}
+
+PICOTTL_TEST(egaApplicationLifetimeStorageKeepsLifecycleAndOwnership) {
+    exerciseApplicationLifetimeDevice<rp2350::EgaDisplayDevice, 8>(
+        VideoMode::IbmEga350, VideoMode::IbmCga640);
+}

@@ -95,7 +95,7 @@ int main() {
     config.pixelPins[1] = 20; // INTENSITY
     config.framebuffer = &framebuffer;
 
-    picottl::rp2350::MdaDisplayDevice device(config);
+    static picottl::rp2350::MdaDisplayDevice device(config);
     picottl::Display display(device);
     picottl::Text text(display.graphics(), picottl::fonts::kIbmMda9x14);
     picottl::Terminal terminal(text, gCells, sizeof gCells / sizeof gCells[0]);
