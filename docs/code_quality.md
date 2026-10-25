@@ -12,7 +12,13 @@ versioned baseline for reviewed pre-existing diagnostics; see below.
 The host build is a standalone C++17 project in `tests/`. It includes the
 portable library, the host device, and the real MDA/CGA/EGA device lifecycle
 code linked against `RecordingScanlineEngine`. The latter records calls; it
-does not execute PIO or DMA. The firmware build remains a separate Pico SDK
+does not execute PIO or DMA. Engine configuration tests additionally compile
+the actual scanline-engine implementation under a test-only class name against
+a recording SDK boundary. They exercise returned errors, resource ownership
+and restart decisions, but do not execute PIO instructions, DMA transfers or
+asynchronous aborts. Pointer addresses stored in 32-bit DMA words are not
+dereferenced by that boundary on a 64-bit host. The firmware build remains a
+separate Pico SDK
 project. Instrumentation options belong only to the host executable and
 default to OFF; instrumented cross-compilation is rejected.
 
@@ -81,7 +87,10 @@ Sanitizers require working native runtimes; Linux is the verified platform.
 The report allowlist includes only compiled portable production code and
 host-executed device lifecycle logic, plus their own headers. It excludes
 test code, the recording engine, generated font datasets, third-party code
-and the real scanline engine. Functions and lines instantiated in multiple
+and the scanline-engine source and its recording SDK, including the engine
+logic executed by the configuration tests. Those tests run in the normal
+host/CI executable, but the established report scope does not count them as
+hardware coverage. Functions and lines instantiated in multiple
 translation units are counted once in the summary. No branch-coverage claim
 is made. Code not compiled by the host target is outside the denominator;
 the percentage must never be presented as whole-firmware coverage.

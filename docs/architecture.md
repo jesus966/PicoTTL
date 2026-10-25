@@ -294,6 +294,18 @@ validate streaming under the application's CPU/DMA load on hardware.
 
 ## 8. Hardware resource policy
 
+The internal RP2350 scanline engine uses invalidating configuration:
+`configure()` first stops its owned hardware and invalidates the previous
+configuration. A failure leaves the engine stopped; `start()` rejects it
+until a subsequent `configure()` succeeds. Error exits also stop hardware
+claimed during that attempt: SDK resource claims do not reset its registers.
+Timing-table contents, GPIO setup
+and PIO programs are not rolled back. Resources acquired before failure remain
+owned for a retry and are released on engine destruction. Callers must keep
+the timing buffer and pixel storage alive as required by the engine, serialize
+lifecycle calls, and must not treat a rejected configuration as permission to
+reuse channels or state machines still owned by that instance.
+
 The framework **never silently claims hardware**. The application always
 decides, via the backend `Config`:
 

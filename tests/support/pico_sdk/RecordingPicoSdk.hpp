@@ -1,0 +1,157 @@
+// SPDX-License-Identifier: MIT
+#pragma once
+
+#include <array>
+#include <cassert>
+#include <cstdint>
+
+// A recording boundary for the SDK calls used by PioScanlineEngine.
+// No PIO instructions, DMA transfers, DREQ timing or bus races are executed.
+using uint = unsigned;
+constexpr int NUM_PIOS = 3, NUM_PIO_STATE_MACHINES = 4;
+constexpr int NUM_DMA_CHANNELS = 16, NUM_BANK0_GPIOS = 30;
+constexpr std::uint32_t DMA_CH0_CTRL_TRIG_EN_BITS = 1;
+constexpr std::uint32_t DMA_CH0_CTRL_TRIG_BUSY_BITS = 0x04000000;
+constexpr std::uint32_t DMA_CH0_CTRL_TRIG_CHAIN_TO_BITS = 0x0001e000;
+constexpr uint DMA_CH0_CTRL_TRIG_CHAIN_TO_LSB = 13;
+constexpr uint clk_sys = 0, GPIO_DRIVE_STRENGTH_8MA = 8;
+constexpr uint GPIO_SLEW_RATE_FAST = 1, DMA_SIZE_32 = 2, PIO_FIFO_JOIN_TX = 1;
+constexpr uint pio_y = 1, pio_osr = 2, pio_null = 3;
+
+struct pio_program_t { uint id; };
+struct pio_sm_config { float divider = 1; };
+struct dma_channel_config { std::uint32_t ctrl = 1; };
+struct PioRegisters { std::uint32_t txf[4]{}; unsigned sdkCalls = 0; };
+using PIO = PioRegisters*;
+
+namespace picottl_test::sdk {
+struct DmaCall {
+    const volatile void* read = nullptr;
+    volatile void* write = nullptr;
+    std::uint32_t count = 0;
+    unsigned configurations = 0;
+};
+struct Recording {
+    std::uint32_t clockHz = 130'000'000;
+    std::array<bool, 16> dmaClaimed{};
+    std::array<std::array<bool, 4>, 3> smClaimed{}, smEnabled{};
+    std::array<std::array<bool, 5>, 3> programs{};
+    std::array<DmaCall, 16> dma{};
+    bool allowTimingProgram = true, allowPixelProgram = true;
+    unsigned calls = 0, triggers = 0, aborts = 0, releases = 0;
+    unsigned invalidPc = 0, abortWhileEnabled = 0;
+    std::uint32_t lastAbort = 0;
+};
+inline Recording recording;
+inline std::array<PioRegisters, 3> pios;
+inline uint index(const PioRegisters* pio) { return static_cast<uint>(pio - pios.data()); }
+} // namespace picottl_test::sdk
+
+struct DmaRegisters {
+    std::uint32_t ctrl_trig = 0;
+    // Both spellings access the same recorded configuration; no MMIO layout.
+    std::uint32_t& al1_ctrl = ctrl_trig;
+    std::uint32_t al3_read_addr_trig = 0;
+};
+struct AbortRegister {
+    void operator=(std::uint32_t mask);
+    // Abort is completed immediately at this boundary, not simulated.
+    operator std::uint32_t() const { return 0; }
+};
+struct DmaHardware {
+    DmaRegisters ch[16];
+    AbortRegister abort;
+    std::uint32_t intr = 0;
+};
+inline DmaHardware recordedDma;
+inline DmaHardware* dma_hw = &recordedDma;
+inline void AbortRegister::operator=(std::uint32_t mask) {
+    auto& r = picottl_test::sdk::recording;
+    ++r.calls; ++r.aborts; r.lastAbort = mask;
+    for (uint ch = 0; ch < NUM_DMA_CHANNELS; ++ch) {
+        if ((mask & (1u << ch)) != 0) {
+            if ((dma_hw->ch[ch].ctrl_trig & DMA_CH0_CTRL_TRIG_EN_BITS) != 0) {
+                ++r.abortWhileEnabled;
+            }
+            dma_hw->ch[ch].ctrl_trig &= ~DMA_CH0_CTRL_TRIG_BUSY_BITS;
+        }
+    }
+}
+
+namespace picottl_test::sdk {
+inline void reset() {
+    recording = {};
+    pios = {};
+    for (auto& ch : dma_hw->ch) {
+        ch.ctrl_trig = 0;
+        ch.al3_read_addr_trig = 0;
+    }
+    dma_hw->intr = 0;
+}
+} // namespace picottl_test::sdk
+
+inline std::uint32_t clock_get_hz(uint) { ++picottl_test::sdk::recording.calls; return picottl_test::sdk::recording.clockHz; }
+inline PIO pio_get_instance(uint n) { assert(n < NUM_PIOS); ++picottl_test::sdk::recording.calls; return &picottl_test::sdk::pios[n]; }
+inline bool pio_sm_is_claimed(PIO p, uint sm) { ++p->sdkCalls; return picottl_test::sdk::recording.smClaimed[picottl_test::sdk::index(p)][sm]; }
+inline void pio_sm_claim(PIO p, uint sm) { ++p->sdkCalls; auto& r = picottl_test::sdk::recording; assert(!pio_sm_is_claimed(p, sm)); r.smClaimed[picottl_test::sdk::index(p)][sm] = true; ++r.calls; }
+inline void pio_sm_unclaim(PIO p, uint sm) { ++p->sdkCalls; auto& r = picottl_test::sdk::recording; assert(pio_sm_is_claimed(p, sm)); r.smClaimed[picottl_test::sdk::index(p)][sm] = false; ++r.calls; ++r.releases; }
+inline void pio_sm_set_enabled(PIO p, uint sm, bool enabled) { ++p->sdkCalls; auto& r = picottl_test::sdk::recording; r.smEnabled[picottl_test::sdk::index(p)][sm] = enabled; ++r.calls; }
+inline void pio_enable_sm_mask_in_sync(PIO p, uint mask) { ++p->sdkCalls; for (uint sm = 0; sm < 4; ++sm) if ((mask & (1u << sm)) != 0) pio_sm_set_enabled(p, sm, true); }
+inline bool pio_can_add_program(PIO, const pio_program_t* program) { return program->id == 0 ? picottl_test::sdk::recording.allowTimingProgram : picottl_test::sdk::recording.allowPixelProgram; }
+inline uint pio_add_program(PIO p, const pio_program_t* program) { ++p->sdkCalls; auto& r = picottl_test::sdk::recording; assert(pio_can_add_program(p, program)); assert(!r.programs[picottl_test::sdk::index(p)][program->id]); r.programs[picottl_test::sdk::index(p)][program->id] = true; ++r.calls; return program->id * 4; }
+inline void pio_remove_program(PIO p, const pio_program_t* program, uint offset) { ++p->sdkCalls; auto& r = picottl_test::sdk::recording; assert(offset == program->id * 4); assert(r.programs[picottl_test::sdk::index(p)][program->id]); r.programs[picottl_test::sdk::index(p)][program->id] = false; ++r.calls; }
+inline void pio_sm_init(PIO p, uint sm, uint pc, const pio_sm_config*) { ++p->sdkCalls; if (pc >= 32) ++picottl_test::sdk::recording.invalidPc; pio_sm_set_enabled(p, sm, false); }
+inline uint pio_get_dreq(PIO, uint sm, bool) { return sm; }
+inline void pio_sm_clear_fifos(PIO, uint) { ++picottl_test::sdk::recording.calls; }
+inline void pio_sm_restart(PIO, uint) { ++picottl_test::sdk::recording.calls; }
+inline void pio_sm_exec(PIO, uint, uint) { ++picottl_test::sdk::recording.calls; }
+inline void pio_sm_put(PIO, uint, std::uint32_t) { ++picottl_test::sdk::recording.calls; }
+inline void pio_sm_set_pins_with_mask(PIO, uint, std::uint32_t, std::uint32_t) { ++picottl_test::sdk::recording.calls; }
+inline void pio_sm_set_consecutive_pindirs(PIO, uint, uint, uint, bool) { ++picottl_test::sdk::recording.calls; }
+inline void pio_gpio_init(PIO, uint) { ++picottl_test::sdk::recording.calls; }
+inline void gpio_set_drive_strength(uint, uint) { ++picottl_test::sdk::recording.calls; }
+inline void gpio_set_slew_rate(uint, uint) { ++picottl_test::sdk::recording.calls; }
+inline uint pio_encode_jmp(uint pc) { if (pc >= 32) ++picottl_test::sdk::recording.invalidPc; return 0; }
+inline uint pio_encode_pull(bool, bool) { return 0; }
+inline uint pio_encode_mov(uint, uint) { return 0; }
+inline uint pio_encode_out(uint, uint) { return 0; }
+inline void sm_config_set_out_pins(pio_sm_config*, uint, uint) {}
+inline void sm_config_set_in_pins(pio_sm_config*, uint) {}
+inline void sm_config_set_out_shift(pio_sm_config*, bool, bool, uint) {}
+inline void sm_config_set_fifo_join(pio_sm_config*, uint) {}
+inline void sm_config_set_clkdiv(pio_sm_config* c, float divider) { c->divider = divider; }
+
+inline bool dma_channel_is_claimed(uint ch) { assert(ch < NUM_DMA_CHANNELS); return picottl_test::sdk::recording.dmaClaimed[ch]; }
+inline void dma_channel_claim(uint ch) { assert(!dma_channel_is_claimed(ch)); picottl_test::sdk::recording.dmaClaimed[ch] = true; ++picottl_test::sdk::recording.calls; }
+inline void dma_channel_unclaim(uint ch) { assert(dma_channel_is_claimed(ch)); picottl_test::sdk::recording.dmaClaimed[ch] = false; ++picottl_test::sdk::recording.calls; ++picottl_test::sdk::recording.releases; }
+inline bool dma_channel_is_busy(uint ch) { return (dma_hw->ch[ch].ctrl_trig & DMA_CH0_CTRL_TRIG_BUSY_BITS) != 0; }
+inline dma_channel_config dma_channel_get_default_config(uint ch) { return {1u | (ch << DMA_CH0_CTRL_TRIG_CHAIN_TO_LSB)}; }
+inline void channel_config_set_chain_to(dma_channel_config* c, uint ch) { c->ctrl = (c->ctrl & ~DMA_CH0_CTRL_TRIG_CHAIN_TO_BITS) | (ch << DMA_CH0_CTRL_TRIG_CHAIN_TO_LSB); }
+inline void channel_config_set_transfer_data_size(dma_channel_config*, uint) {}
+inline void channel_config_set_read_increment(dma_channel_config*, bool) {}
+inline void channel_config_set_write_increment(dma_channel_config*, bool) {}
+inline void channel_config_set_dreq(dma_channel_config*, uint) {}
+inline void channel_config_set_bswap(dma_channel_config*, bool) {}
+inline void dma_channel_configure(uint ch, const dma_channel_config* c, volatile void* write, const volatile void* read, std::uint32_t count, bool trigger) {
+    assert(!trigger); // The engine must configure the whole group before triggering.
+    auto& r = picottl_test::sdk::recording;
+    auto& call = r.dma[ch];
+    call.read = read; call.write = write; call.count = count; ++call.configurations;
+    dma_hw->ch[ch].ctrl_trig = c->ctrl; ++r.calls;
+}
+inline void dma_channel_set_read_addr(uint ch, const volatile void* read, bool trigger) { assert(!trigger); picottl_test::sdk::recording.dma[ch].read = read; ++picottl_test::sdk::recording.calls; }
+inline void dma_channel_set_trans_count(uint ch, std::uint32_t count, bool trigger) {
+    auto& r = picottl_test::sdk::recording;
+    r.dma[ch].count = count; ++r.calls;
+    if (trigger) { ++r.triggers; assert((dma_hw->ch[ch].ctrl_trig & 1u) != 0); dma_hw->ch[ch].ctrl_trig |= DMA_CH0_CTRL_TRIG_BUSY_BITS; }
+}
+inline void hw_write_masked(std::uint32_t* ptr, std::uint32_t value, std::uint32_t mask) { *ptr = (*ptr & ~mask) | (value & mask); ++picottl_test::sdk::recording.calls; }
+inline void tight_loop_contents() { assert(false && "Recording SDK never leaves an abort pending"); }
+
+inline constexpr pio_program_t ttl_timing_program{0}, ttl_pixels_program{1};
+inline constexpr pio_program_t ttl_pixels2_program{2}, ttl_pixels4_program{3}, ttl_pixels8_program{4};
+inline pio_sm_config ttl_timing_program_get_default_config(uint) { return {}; }
+inline pio_sm_config ttl_pixels_program_get_default_config(uint) { return {}; }
+inline pio_sm_config ttl_pixels2_program_get_default_config(uint) { return {}; }
+inline pio_sm_config ttl_pixels4_program_get_default_config(uint) { return {}; }
+inline pio_sm_config ttl_pixels8_program_get_default_config(uint) { return {}; }

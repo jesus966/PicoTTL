@@ -142,7 +142,7 @@ bool PioScanlineEngine::setPixelSource(const std::uint8_t* data, std::size_t siz
     }
     pixelSource_ = data;
     pixelSourceBytes_ = sizeBytes;
-    pixelSourceAddress_ = reinterpret_cast<std::uint32_t>(data);
+    pixelSourceAddress_ = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(data));
     pixelBitsPerPixel_ = bitsPerPixel;
     pixelPinCount_ = pinCount;
     configured_ = false; // A new configure() is required.
@@ -150,9 +150,17 @@ bool PioScanlineEngine::setPixelSource(const std::uint8_t* data, std::size_t siz
 }
 
 bool PioScanlineEngine::configure(const VideoTiming& timing) {
-    if (running_) {
+    // Configuration is invalidating, not transactional. Quiesce even an
+    // idle configuration: setupDma() has already set EN on its channels.
+    // Keep acquisition flags so retries and destruction retain ownership.
+    stop();
+    configured_ = false;
+    const auto reject = [this] {
+        // A later stage may have claimed more hardware. SDK claims do
+        // not reset registers, so quiesce those resources on every error.
         stop();
-    }
+        return false;
+    };
     if (pixelSource_ != nullptr) {
         // The pixel stream must pack whole bytes per line and cover
         // exactly one frame of visible pixels.
@@ -161,33 +169,33 @@ bool PioScanlineEngine::configure(const VideoTiming& timing) {
         if (lineBits % 8u != 0 ||
             pixelSourceBytes_ !=
                 static_cast<std::size_t>(lineBits / 8u) * timing.vActive) {
-            return false;
+            return reject();
         }
     }
     if (!buildTimingBuffer(timing)) {
-        return false;
+        return reject();
     }
     timing_ = timing;
     if (!hardwareAcquired_) {
         if (!acquireHardware()) {
-            return false;
+            return reject();
         }
         hardwareAcquired_ = true;
     }
     if (pixelSource_ != nullptr && !pixelHardwareAcquired_) {
         if (!acquirePixelHardware()) {
-            return false;
+            return reject();
         }
         pixelHardwareAcquired_ = true;
     }
     if (pixelSource_ != nullptr && !preparePixelProgram()) {
-        return false;
+        return reject();
     }
     if (!applyPioConfig()) {
-        return false;
+        return reject();
     }
     if (pixelSource_ != nullptr && !applyPixelPioConfig()) {
-        return false;
+        return reject();
     }
     setupDma();
     if (pixelSource_ != nullptr) {
@@ -377,7 +385,8 @@ bool PioScanlineEngine::buildTimingBuffer(const VideoTiming& timing) {
     }
 
     wordsUsed_ = required;
-    timingBufferAddress_ = reinterpret_cast<std::uint32_t>(config_.timingBuffer);
+    timingBufferAddress_ = static_cast<std::uint32_t>(
+        reinterpret_cast<std::uintptr_t>(config_.timingBuffer));
     return true;
 }
 
@@ -472,6 +481,7 @@ bool PioScanlineEngine::preparePixelProgram() {
             pio_remove_program(pio, pixelProgramFor(loadedPixelProgramBpp_),
                                static_cast<uint>(pixelProgramOffset_));
             pixelProgramOffset_ = -1;
+            loadedPixelProgramBpp_ = 0; // No program remains if the next allocation fails.
         }
         const pio_program_t* program = pixelProgramFor(bpp);
         if (!pio_can_add_program(pio, program)) {
