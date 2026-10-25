@@ -4,6 +4,7 @@
 # sources plus the host backend and runs the automated regression tests.
 # RP2350 device lifecycle code is tested with a recording engine; the real
 # scanline engine and all Pico SDK hardware code are excluded from this build.
+# The private DMA stop-order helper is exercised with recording callbacks.
 # No Pico SDK, no external libraries - plain C++17.
 #
 # Usage:
@@ -38,6 +39,7 @@ add_executable(picottl_tests
     test_terminal.cpp
     test_ansi_terminal.cpp
     test_framebuffer_lifecycle.cpp
+    test_dma_stop.cpp
     # Real backend lifecycle code, linked to a recording engine instead
     # of the hardware implementation. This does not emulate PIO or DMA.
     support/RecordingScanlineEngine.cpp

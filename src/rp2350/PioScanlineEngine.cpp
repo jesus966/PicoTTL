@@ -6,6 +6,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "picottl/rp2350/PioScanlineEngine.hpp"
+#include "DmaStop.hpp"
 
 #include <cmath>
 
@@ -61,14 +62,6 @@ const pio_program_t* pixelProgramFor(std::uint8_t bitsPerPixel) {
         default:
             return &ttl_pixels_program;
     }
-}
-
-/// Disables a channel's completion chain (chain_to == own index).
-void disableChain(std::uint8_t channel) {
-    dma_channel_hw_t* hw = &dma_hw->ch[channel];
-    hw->al1_ctrl = (hw->al1_ctrl & ~DMA_CH0_CTRL_TRIG_CHAIN_TO_BITS) |
-                   (static_cast<std::uint32_t>(channel)
-                    << DMA_CH0_CTRL_TRIG_CHAIN_TO_LSB);
 }
 
 /// Monitor-facing outputs drive low-impedance TTL summing networks
@@ -237,6 +230,13 @@ bool PioScanlineEngine::start() {
     }
     driveSignalsIdle();
 
+    // stop() must clear EN and CHAIN_TO for E5. Rearm both DMA loops
+    // while PIO is disabled, including the control channels' EN bits.
+    setupDma();
+    if (pixelPath) {
+        setupPixelDma();
+    }
+
     // Prime the DMA loops. The state machines stall on empty FIFOs, so
     // this ordering is not timing-critical.
     dma_channel_set_read_addr(config_.dmaDataChannel, config_.timingBuffer, false);
@@ -260,45 +260,66 @@ bool PioScanlineEngine::start() {
 }
 
 void PioScanlineEngine::stop() {
-    if (!running_) {
+    if (!hardwareAcquired_) {
         return;
     }
 
     PIO pio = pio_get_instance(config_.pioInstance);
 
-    // Ordering matters for a clean restart:
-    // 1. Disable the state machines FIRST. They stop consuming, the TX
-    //    FIFOs fill, the DREQs deassert and the DMA channels quiesce on
-    //    their own - so the aborts below happen with no transfers or
-    //    DREQ credits in flight. Aborting a DREQ-paced channel while it
-    //    is actively streaming can leave stale state that corrupts the
-    //    positional timing stream on the next start.
+    // Stop consumption first, but do not assume that this retires DMA
+    // transfers: FIFO space and already-issued bus writes can remain.
     pio_sm_set_enabled(pio, config_.stateMachine, false);
     if (pixelHardwareAcquired_) {
         pio_sm_set_enabled(pio, config_.pixelStateMachine, false);
     }
 
-    // 2. Break the completion chains so a data channel finishing at this
-    //    exact moment can no longer retrigger anything.
-    disableChain(config_.dmaDataChannel);
+    std::uint32_t mask = (1u << config_.dmaDataChannel) |
+                         (1u << config_.dmaControlChannel);
     if (pixelHardwareAcquired_) {
-        disableChain(config_.pixelDmaDataChannel);
+        mask |= (1u << config_.pixelDmaDataChannel) |
+                (1u << config_.pixelDmaControlChannel);
     }
 
-    // 3. Abort everything (control channels first).
-    dma_channel_abort(config_.dmaControlChannel);
-    dma_channel_abort(config_.dmaDataChannel);
-    if (pixelHardwareAcquired_) {
-        dma_channel_abort(config_.pixelDmaControlChannel);
-        dma_channel_abort(config_.pixelDmaDataChannel);
-    }
+    // SDK 2.3.0 dma_channel_abort() does not clear EN. E5 requires all
+    // participants disabled before abort, including the control channels
+    // writing READ_ADDR_TRIG. Abort the entire group simultaneously.
+    detail::stopDmaChannels(mask,
+        [](std::uint8_t channel) {
+            hw_write_masked(&dma_hw->ch[channel].al1_ctrl,
+                            static_cast<std::uint32_t>(channel)
+                                << DMA_CH0_CTRL_TRIG_CHAIN_TO_LSB,
+                            DMA_CH0_CTRL_TRIG_CHAIN_TO_BITS |
+                                DMA_CH0_CTRL_TRIG_EN_BITS);
+        },
+        [](std::uint32_t channels) { dma_hw->abort = channels; },
+        [](std::uint32_t channels) {
+            if ((dma_hw->abort & channels) != 0) {
+                return true;
+            }
+            // Also retain the SDK's BUSY retirement check before touching
+            // FIFOs, reconfiguring or releasing either member of a pair.
+            for (uint channel = 0; channel < NUM_DMA_CHANNELS; ++channel) {
+                if ((channels & (1u << channel)) != 0 &&
+                    dma_channel_is_busy(channel)) {
+                    return true;
+                }
+            }
+            return false;
+        },
+        [] { tight_loop_contents(); });
+    // The engine never enables DMA IRQs; discard completion status that
+    // may have been latched during abort before these channels are reused.
+    dma_hw->intr = mask;
 
-    // 4. Clean the FIFOs and park the outputs at their idle levels.
+    // Clear even idle/partially configured owned resources. Only execute
+    // the idle pin instruction when a successful start initialized PIO.
     pio_sm_clear_fifos(pio, config_.stateMachine);
     if (pixelHardwareAcquired_) {
         pio_sm_clear_fifos(pio, config_.pixelStateMachine);
     }
-    driveSignalsIdle();
+    if (running_) {
+        driveSignalsIdle();
+    }
 
     running_ = false;
 }
