@@ -23,6 +23,10 @@
 //                              size); reply "ACK" / "ERR ..."
 // Bytes are written straight into the live framebuffer as they arrive
 // (the image paints top-down on the monitor - that is the demo).
+// Reception has a 10-second inactivity timeout. Incomplete commands,
+// interrupted frames and nonzero invalid lengths quarantine the stream:
+// stop the sender, close the port, reset the Pico, then open a fresh stream.
+// Reopening CDC alone cannot retire late payload bytes. See README.md.
 //
 // Modes served by ONE firmware. Following PicoTTL's canonical-
 // connector philosophy, the CGA modes are driven by EgaDisplayDevice
@@ -66,6 +70,9 @@
 
 #include "hardware/clocks.h"
 #include "pico/stdlib.h"
+#include "pico/stdio_usb.h"
+
+#include "ImageReceiver.hpp"
 
 #include "picottl/PicoTTL.hpp"
 #include "picottl/rp2350/EgaDisplayDevice.hpp"
@@ -191,27 +198,6 @@ bool applyMode(std::size_t index) {
     return true;
 }
 
-int readByteBlocking() {
-    while (true) {
-        const int c = getchar_timeout_us(100'000);
-        if (c >= 0) {
-            return c;
-        }
-    }
-}
-
-/// Reads exactly `count` bytes into `out` (blocking, chunked).
-void readExact(std::uint8_t* out, std::uint32_t count) {
-    while (count > 0) {
-        const int c = getchar_timeout_us(100'000);
-        if (c < 0) {
-            continue;
-        }
-        *out++ = static_cast<std::uint8_t>(c);
-        --count;
-    }
-}
-
 void handleHello() {
     printf("PICOTTL-HOSTIMAGE V1 ACTIVE %u MODES", (unsigned)gActiveMode);
     for (std::size_t i = 0; i < kModeCount; ++i) {
@@ -221,35 +207,26 @@ void handleHello() {
     printf("\n");
 }
 
-void handleSetMode() {
-    const auto index = static_cast<std::size_t>(readByteBlocking());
-    if (applyMode(index)) {
-        printf("OK %lu\n", (unsigned long)kModes[gActiveMode].fbBytes);
-    } else {
-        printf("ERR bad mode\n");
+struct Commands {
+    void hello() { handleHello(); }
+    bool setMode(std::uint8_t index) { return applyMode(index); }
+    std::uint32_t frameBytes() const { return kModes[gActiveMode].fbBytes; }
+    void modeResult(bool accepted) {
+        if (accepted) printf("OK %lu\n", (unsigned long)frameBytes());
+        else printf("ERR bad mode\n");
     }
-}
-
-void handleFrame() {
-    std::uint32_t length = 0;
-    for (int i = 0; i < 4; ++i) {
-        length |= static_cast<std::uint32_t>(readByteBlocking()) << (8 * i);
-    }
-    if (length != kModes[gActiveMode].fbBytes || length > sizeof gStorage) {
-        // Consume the payload so the stream stays in sync, then report.
-        for (std::uint32_t i = 0; i < length && i < sizeof gStorage; ++i) {
-            (void)readByteBlocking();
+    void frameAccepted() { printf("ACK\n"); }
+    void error(host_image::ReceiveError error, std::uint32_t expected) {
+        if (error == host_image::ReceiveError::Length) {
+            printf("ERR expected %lu bytes\n", (unsigned long)expected);
+        } else if (error == host_image::ReceiveError::Timeout) {
+            printf("ERR receive timeout; reset device before retry\n");
+        } else {
+            // USB may already be disconnected, so this reply may be lost.
+            printf("ERR disconnected; reset device before retry\n");
         }
-        printf("ERR expected %lu bytes\n",
-               (unsigned long)kModes[gActiveMode].fbBytes);
-        return;
     }
-    // Straight into the live framebuffer: the image paints top-down on
-    // the monitor as it arrives. The application owns this storage;
-    // PicoTTL keeps scanning it out with zero CPU involvement.
-    readExact(gStorage, length);
-    printf("ACK\n");
-}
+};
 
 } // namespace
 
@@ -266,19 +243,14 @@ int main() {
     gpio_put(PICO_DEFAULT_LED_PIN, ok);
 #endif
 
+    Commands commands;
+    host_image::ImageReceiver<Commands> receiver(gStorage, sizeof gStorage, commands);
     while (true) {
-        switch (readByteBlocking()) {
-            case 'H':
-                handleHello();
-                break;
-            case 'M':
-                handleSetMode();
-                break;
-            case 'F':
-                handleFrame();
-                break;
-            default:
-                break; // Unknown bytes are ignored.
-        }
+        const bool connected = stdio_usb_connected();
+        const int byte = connected ? getchar_timeout_us(0) : -1;
+        receiver.poll(byte, to_ms_since_boot(get_absolute_time()), connected);
+        // Quarantined bytes are discarded one per iteration, never drained
+        // according to an untrusted length or interpreted as commands.
+        if (byte < 0) sleep_ms(1);
     }
 }
