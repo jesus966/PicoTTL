@@ -55,6 +55,8 @@ configure_file(${CMAKE_CURRENT_LIST_DIR}/../src/rp2350/MdaDisplayDevice.cpp
 configure_file(${CMAKE_CURRENT_LIST_DIR}/test_mda_pixel_pins.cpp
     ${PICOTTL_HOST_B_MDA_TEST} COPYONLY)
 
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/PicoTTLPortableSources.cmake)
+
 add_executable(picottl_tests
     framework/test.cpp
     test_packed_framebuffer.cpp
@@ -83,18 +85,7 @@ add_executable(picottl_tests
     ${CMAKE_CURRENT_LIST_DIR}/../src/rp2350/MdaDisplayDevice.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/rp2350/CgaDisplayDevice.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/rp2350/EgaDisplayDevice.cpp
-    # Platform-independent framework sources (no RP2350 code here).
-    ${CMAKE_CURRENT_LIST_DIR}/../src/AnsiTerminal.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../src/DisplaySurface.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../src/Graphics.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../src/Terminal.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../src/Text.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../src/fonts/IbmCga8x8.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../src/fonts/IbmCga8x8Cp850.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../src/fonts/IbmEga8x14.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../src/fonts/IbmEga8x14Cp850.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../src/fonts/IbmMda9x14.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../src/fonts/IbmMda9x14Cp850.cpp
+    ${PICOTTL_PORTABLE_SOURCES}
     # Host backend.
     ${CMAKE_CURRENT_LIST_DIR}/../src/host/HostDisplayDevice.cpp
 )

@@ -55,19 +55,10 @@ endif()
 # PicoTTL framework library
 # ---------------------------------------------------------------------------
 
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/PicoTTLPortableSources.cmake)
+
 add_library(picottl STATIC
-    # Platform-independent modules
-    src/AnsiTerminal.cpp
-    src/DisplaySurface.cpp
-    src/Graphics.cpp
-    src/Terminal.cpp
-    src/Text.cpp
-    src/fonts/IbmCga8x8.cpp
-    src/fonts/IbmCga8x8Cp850.cpp
-    src/fonts/IbmEga8x14.cpp
-    src/fonts/IbmEga8x14Cp850.cpp
-    src/fonts/IbmMda9x14.cpp
-    src/fonts/IbmMda9x14Cp850.cpp
+    ${PICOTTL_PORTABLE_SOURCES}
     # RP2350 backend (the only Pico SDK dependent code)
     src/rp2350/CgaDisplayDevice.cpp
     src/rp2350/EgaDisplayDevice.cpp
