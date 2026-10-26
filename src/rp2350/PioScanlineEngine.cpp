@@ -69,6 +69,10 @@ constexpr bool segmentLengthValid(std::uint32_t pixels) {
     return pixels >= kSegmentOverhead && pixels <= kMaxSegmentPixels;
 }
 
+constexpr bool syncPolarityValid(SyncPolarity polarity) {
+    return polarity == SyncPolarity::ActiveHigh || polarity == SyncPolarity::ActiveLow;
+}
+
 constexpr bool activeLevel(SyncPolarity polarity) {
     return polarity == SyncPolarity::ActiveHigh;
 }
@@ -187,12 +191,14 @@ bool PioScanlineEngine::configure(const VideoTiming& timing) {
     };
     if (pixelSource_ != nullptr) {
         // The pixel stream must pack whole bytes per line and cover
-        // exactly one frame of visible pixels.
+        // exactly one frame of visible pixels. The RP2350 normal-mode count
+        // is only 28 bits; higher bits select another DMA transfer mode.
         const std::uint32_t lineBits =
             static_cast<std::uint32_t>(timing.hActive) * pixelBitsPerPixel_;
         if (lineBits % 8u != 0 ||
             pixelSourceBytes_ !=
-                static_cast<std::size_t>(lineBits / 8u) * timing.vActive) {
+                static_cast<std::size_t>(lineBits / 8u) * timing.vActive ||
+            pixelSourceBytes_ / 4u > DMA_CH0_TRANS_COUNT_COUNT_BITS) {
             return reject();
         }
     }
@@ -363,7 +369,9 @@ bool PioScanlineEngine::isRunning() const {
 
 bool PioScanlineEngine::buildTimingBuffer(const VideoTiming& timing) {
     const std::size_t required = timingWordsFor(timing);
-    if (required == 0 || config_.timingBuffer == nullptr || config_.timingBufferWords < required) {
+    if (required == 0 || !syncPolarityValid(timing.hSyncPolarity) ||
+        !syncPolarityValid(timing.vSyncPolarity) ||
+        config_.timingBuffer == nullptr || config_.timingBufferWords < required) {
         return false;
     }
 
