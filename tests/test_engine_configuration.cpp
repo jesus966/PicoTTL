@@ -684,3 +684,19 @@ PICOTTL_TEST(engineInvalidPixelConfigurationDoesNotBlockAnotherEngine) {
     }
     checkReleased();
 }
+
+PICOTTL_TEST(engineAPackageRejectsUnavailablePinsBeforeGpioSetup) {
+    for (unsigned video : {29u, 30u, 31u, 32u, 34u, 47u}) {
+        sdk::reset(); Fixture f;
+        auto config = f.config(); config.videoPin = static_cast<std::uint8_t>(video);
+        {
+            HardwareScanlineEngine engine(config);
+            CHECK(engine.setPixelSource(f.pixels, 4));
+            CHECK_EQ(engine.configure(timing), video == 29);
+            if (video == 29) { CHECK(engine.start()); engine.stop(); }
+            else { checkRejectedStart(engine); checkNoPinChanges(); checkReleased(); }
+            CHECK_EQ(sdk::recording.invalidPinCalls, 0u);
+        }
+        checkReleased();
+    }
+}

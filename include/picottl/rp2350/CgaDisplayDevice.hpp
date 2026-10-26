@@ -75,6 +75,11 @@ public:
     /// nothing else. Whether a particular pin assignment is realizable
     /// is checked at begin(), which returns false for assignments this
     /// platform cannot generate (see begin()).
+    /// GPIO indices are absolute and limited by the target package and the
+    /// selected PIO's current GPIO window (0..31, or 16..47 on RP2350B).
+    /// The application selects the shared PIO GPIO base before any programs
+    /// are loaded; this backend never changes it. Keep the base stable while
+    /// any user retains PIO resources, including after end().
     struct Config {
         std::uint8_t pioInstance = 0;       ///< PIO block index (0..2).
         std::uint8_t stateMachine = 0;      ///< Signal state machine (0..3).
