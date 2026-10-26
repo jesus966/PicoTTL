@@ -142,6 +142,15 @@ The central application-facing class. Construction injects a
 `surface()` expose the drawing layers. Further members (a `text()`
 accessor, vertical-blank waiting) would be added here additively.
 
+Frequency queries describe nominal mode metadata, not measured output or the
+RP2350 engine's effective programmed rate. `Display::refreshRateMilliHz()` is
+valid after a successful `begin()` and remains mode metadata after `end()`.
+A failed operation can also leave the last successful mode selected; the rate
+is not evidence that output is running or configuration is valid. Use
+`isActive()` to check running state. `DisplayDevice` additionally permits the
+backend's default-mode metadata before the first successful `begin()`.
+
+
 ### VideoMode (frozen)
 
 A plain enumeration of the **curated video modes**. Standards and modes
@@ -751,9 +760,9 @@ peripherals) without any change to the public API.
   channel rewinds). The raster therefore runs with zero CPU involvement
   and no interrupts.
 - The PIO clock divider is derived from the application-chosen system
-  clock and snapped to an integer when the pixel clock error stays below
+  clock and snapped to an integer when the pixel clock error is within
   1 % (e.g. 130 MHz ÷ 8 = 16.25 MHz vs canonical 16.257 MHz), eliminating
-  fractional-divider jitter.
+  fractional-divider jitter in the timing state machine.
   Configuration requires positive nominal pixel and SDK-reported system
   frequencies, with their exact ratio in the PIO divider range [1, 65536].
   The divider has 16 integer and 8 fractional bits; integer/fraction 0/0
@@ -789,6 +798,51 @@ peripherals) without any change to the public API.
   generator through an internal display-enable GPIO; that design
   intentionally avoids embedded command formats (see design
   principles).
+
+### Nominal and programmed frequencies
+
+`VideoTiming::pixelClockHz` is nominal. Its helpers return
+`floor(pixelClockHz / hTotal())` Hz and
+`floor(1000 * pixelClockHz / (hTotal() * vTotal()))` millihertz, subject to their
+existing zero-result contract. RP2350 and host devices expose that nominal
+refresh through `DisplayDevice` and `Display`; no existing public query reports
+an effective clock. These descriptors are not changed by hardware configuration.
+
+For a successfully configured RP2350 engine, let `S` be the system frequency
+used during configuration and `Q` the timing divider in units of 1/256. Decode
+`Q = 256 * INT + FRAC` from CLKDIV; integer/fraction 0/0 means `Q = 16777216`
+(divider 65536), not zero. The expected average rates are:
+
+```text
+timing-SM clock = S * 256 / Q
+horizontal Hz   = S * 256 / (Q * hTotal())
+vertical Hz     = S * 256 / (Q * hTotal() * vTotal())
+```
+
+Widen operands before integer multiplication and retain precision until the
+final division; do not derive vertical refresh from an already truncated
+horizontal result. Each timing-table segment executes its encoded delay plus
+three cycles, exactly its requested horizontal span. All visible and blanking
+lines are emitted with no additional programmed per-line/per-frame cycles.
+Pixel depth does not change those counts. With pixels enabled, the pixel SM
+runs at twice the timing-SM frequency; without pixels, horizontal and vertical
+rates remain meaningful and there is no active pixel-SM frequency.
+
+These are programmed averages assuming a stable system clock and an unstalled
+timing stream, not electrical measurements. Fractional-divider jitter, FIFO
+stalls and oscillator tolerance require separate hardware assessment. The
+engine retains its selected divider, but not a snapshot of the system clock;
+a failed configuration can retain attempted/stale values, and stopped output
+has no generated rate. Such state must not be interpreted as a valid effective
+frequency sample. Changing the system clock requires reconfiguration.
+
+For example, CGA640 at 130 MHz snaps to divider 9 (pixel-SM divider 4.5).
+Nominal refresh is 59.922743 Hz, exposed as 59922 mHz after truncation; the
+programmed refresh is approximately 60.451170 Hz. This difference is caused by
+integer snapping, not a measurement or a clock-ratio error. Diagnostic Status
+and Timings screens likewise show nominal values: compare scope measurements
+against the configured-divider calculation, not nominal values within crystal
+tolerance alone.
 
 ## Appendix B - IBM MDA raster reference
 
