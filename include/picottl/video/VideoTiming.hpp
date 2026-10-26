@@ -24,7 +24,9 @@ enum class SyncPolarity : std::uint8_t {
     ActiveLow   ///< Sync pulse is a logic-low pulse.
 };
 
-/// Complete raster timing description for a TTL video mode.
+/// Complete nominal raster timing description for a TTL video mode.
+/// Frequency helpers use pixelClockHz, not a backend's programmed clock or
+/// measured output. Hardware divider selection does not modify this object.
 ///
 /// All horizontal values are expressed in pixel clocks, all vertical
 /// values in scanlines. A scanline is structured as:
@@ -60,7 +62,7 @@ struct VideoTiming {
         return static_cast<std::uint32_t>(vActive) + vFrontPorch + vSyncWidth + vBackPorch;
     }
 
-    /// Horizontal scan rate in Hz (rounded down).
+    /// Nominal horizontal scan rate in Hz (rounded down).
     /// Returns zero if the horizontal total is zero. Zero can also be a
     /// legitimate rounded result, so it is not an unambiguous error indicator.
     constexpr std::uint32_t lineFrequencyHz() const {
@@ -71,7 +73,7 @@ struct VideoTiming {
         return pixelClockHz / total;
     }
 
-    /// Vertical refresh rate in millihertz (rounded down).
+    /// Nominal vertical refresh rate in millihertz (rounded down).
     /// Returns zero if either total is zero or the rounded result exceeds
     /// uint32_t. Zero can also be a legitimate rounded result, so it is not
     /// an unambiguous error indicator. Neither helper validates hardware timing.

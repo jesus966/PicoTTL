@@ -85,10 +85,11 @@ public:
 };
 
 /// Validates: nothing on screen - it is an oscilloscope companion.
-/// Expected: the printed compile-time timings match probe measurements
-/// on HSYNC/VSYNC/VIDEO within crystal tolerance.
-/// Defects indicate: wrong system clock, wrong divider snapping, or a
-/// timing-table builder regression (measured != printed).
+/// The printed periods use the nominal catalog pixel clock, not the PIO
+/// clock selected by integer snapping and quantization. Compare measurements
+/// against the effective programmed timing first; nominal/observed differences
+/// alone do not establish a regression. Crystal tolerance, jitter and stalls
+/// can also affect measurements.
 class TimingsPattern final : public DiagnosticPattern {
 public:
     const char* name() const override { return "Timings"; }

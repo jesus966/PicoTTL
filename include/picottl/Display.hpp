@@ -92,7 +92,10 @@ public:
         return device_.height();
     }
 
-    /// Vertical refresh rate in millihertz. Valid after a successful begin().
+    /// Nominal mode refresh rate in millihertz. Valid after a successful
+    /// begin(); the mode metadata remains available after end(). This is
+    /// neither an effective programmed output frequency nor a measurement.
+    /// Use isActive() to determine whether output is running.
     std::uint32_t refreshRateMilliHz() const {
         return device_.refreshRateMilliHz();
     }

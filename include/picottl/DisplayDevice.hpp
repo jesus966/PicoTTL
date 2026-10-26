@@ -63,7 +63,9 @@ public:
     /// Visible height in pixels of the current (or default) mode.
     virtual std::uint16_t height() const = 0;
 
-    /// Vertical refresh rate in millihertz of the current (or default) mode.
+    /// Nominal vertical refresh rate in millihertz of the current (or default)
+    /// mode. This is mode metadata, independent of isActive(); it does not
+    /// report a backend's effective programmed frequency or a measurement.
     virtual std::uint32_t refreshRateMilliHz() const = 0;
 
     /// The drawing surface scanned out by this backend, or nullptr when
