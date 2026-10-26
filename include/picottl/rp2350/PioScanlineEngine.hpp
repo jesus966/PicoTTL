@@ -94,6 +94,12 @@ public:
     /// Invalid hardware parameters are rejected before acquisition. GPIO
     /// setup is deferred until resource acquisition and program installation
     /// succeed. Stopping existing output may still drive its idle levels.
+    /// Horizontal active/sync/back spans must be >= 3; the front porch may
+    /// be zero (omitted) or >= 3. Vertical intervals may be zero, but the
+    /// total must be nonzero. Only the named SyncPolarity values are accepted.
+    /// Pixel sources must also satisfy byte/word packing and fit the RP2350
+    /// normal DMA transfer-count field. These are engine constraints, not
+    /// a guarantee that a particular monitor accepts the timing.
     /// Partially acquired resources remain owned for retry or destruction;
     /// the old timing table/programs are not restored. Calls must be serialized.
     bool configure(const VideoTiming& timing);

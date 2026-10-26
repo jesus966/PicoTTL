@@ -14,6 +14,8 @@ constexpr int NUM_DMA_CHANNELS = 16;
 #define PICOTTL_TEST_GPIO_COUNT 30
 #endif
 constexpr int NUM_BANK0_GPIOS = PICOTTL_TEST_GPIO_COUNT;
+constexpr std::uint32_t DMA_CH0_TRANS_COUNT_COUNT_BITS = 0x0fffffff;
+constexpr std::uint32_t DMA_CH0_TRANS_COUNT_MODE_BITS = 0xf0000000;
 constexpr std::uint32_t DMA_CH0_CTRL_TRIG_EN_BITS = 1;
 constexpr std::uint32_t DMA_CH0_CTRL_TRIG_BUSY_BITS = 0x04000000;
 constexpr std::uint32_t DMA_CH0_CTRL_TRIG_CHAIN_TO_BITS = 0x0001e000;

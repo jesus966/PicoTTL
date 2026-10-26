@@ -799,6 +799,40 @@ peripherals) without any change to the public API.
   intentionally avoids embedded command formats (see design
   principles).
 
+### Custom timing constraints
+
+Arithmetic validity, engine representability and monitor compatibility are
+separate concerns. `VideoTiming` helpers describe nominal arithmetic; the
+RP2350 engine checks its own encoding constraints, without enforcing a CRT
+modeline or monitor acceptance range.
+
+The active horizontal span, HSYNC width and back porch each require 3..65535
+cycles: each is emitted as a segment whose delay is `span - 3`. The horizontal
+front porch may be zero (no segment), or 3..65535. Ordering is fixed by the
+fields, so HSYNC cannot overlap the active span. Only `ActiveHigh` and
+`ActiveLow` sync polarities are accepted; unknown enum values are rejected.
+
+Each vertical interval may be 0..65535 lines, but the total must be nonzero.
+Zero intervals are skipped, including zero active or VSYNC intervals in
+signal-only configurations. This can produce a constant VSYNC or no visible
+window; it remains executable by the engine and is not a promise of usable
+CRT video. A table period does not imply VSYNC edges. A positive pixel source
+cannot match zero active height. Zero vertical porches and single-line signal frames do not need special encoding.
+
+The field types bound each total to 262140. Three or four words per line
+require at most 1048560 timing words, within the RP2350 normal DMA count field;
+the caller must provide that storage. The 29-bit segment delay is wider than
+any span representable by the public horizontal fields.
+
+Pixel streams additionally require whole bytes per line, an exact visible-frame
+size and four-byte source alignment/size. Their word count must not exceed the
+SDK's 28-bit normal DMA count (`0x0fffffff` transfers, or 1073741820 bytes).
+Larger values would occupy DMA mode bits and are rejected before table writes
+or hardware acquisition. This encoding bound does not guarantee that the board
+has enough addressable memory; buffer capacity and lifetime remain the caller's
+responsibility. Failed reconfiguration still stops previous output and retains
+its established resource ownership.
+
 ### Nominal and programmed frequencies
 
 `VideoTiming::pixelClockHz` is nominal. Its helpers return

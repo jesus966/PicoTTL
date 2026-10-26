@@ -3,6 +3,7 @@
 #include "support/HardwareScanlineEngine.hpp"
 #include "support/pico_sdk/RecordingPicoSdk.hpp"
 #include "picottl/video/ModeTimings.hpp"
+#include <vector>
 
 namespace {
 using picottl::rp2350::HardwareScanlineEngine;
@@ -829,4 +830,185 @@ PICOTTL_TEST(engineCoherentClockRecoveryPreservesStopStartChaining) {
     CHECK_EQ(divider256(0), 540u); CHECK_EQ(divider256(1), 270u);
     CHECK_EQ((dma_hw->ch[0].ctrl_trig & DMA_CH0_CTRL_TRIG_CHAIN_TO_BITS) >> 13, 1u);
     CHECK_EQ((dma_hw->ch[2].ctrl_trig & DMA_CH0_CTRL_TRIG_CHAIN_TO_BITS) >> 13, 3u);
+}
+
+PICOTTL_TEST(engineRejectsUnknownSyncPolaritiesBeforeHardware) {
+    for (bool pixels : {false, true}) for (bool vertical : {false, true}) for (unsigned value : {2u, 255u}) {
+        sdk::reset(); Fixture f;
+        for (auto& word : f.table) word = 0xdeadbeefu;
+        HardwareScanlineEngine engine(f.config());
+        if (pixels) CHECK(engine.setPixelSource(f.pixels, 4));
+        auto invalid = timing;
+        (vertical ? invalid.vSyncPolarity : invalid.hSyncPolarity) = static_cast<picottl::SyncPolarity>(value);
+        CHECK(!engine.configure(invalid)); checkRejectedStart(engine);
+        checkNoPinChanges(); checkReleased(); CHECK_EQ(sdk::recording.calls, 0u);
+        for (auto word : f.table) CHECK_EQ(word, 0xdeadbeefu);
+        CHECK(engine.configure(timing)); CHECK(engine.start()); engine.stop();
+    }
+}
+
+PICOTTL_TEST(engineRejectsPixelCountsThatWouldSelectAnotherDmaMode) {
+    struct Case { std::uint16_t width, height; std::uint8_t depth; };
+    const Case cases[] = {{32768, 32768, 8}, {65532, 32772, 4}};
+    for (const auto& c : cases) {
+        sdk::reset(); Fixture f;
+        auto requested = timing;
+        requested.hActive = c.width; requested.hFrontPorch = 0;
+        requested.hSyncWidth = requested.hBackPorch = 3;
+        requested.vActive = c.height; requested.vFrontPorch = requested.vBackPorch = 0; requested.vSyncWidth = 1;
+        const auto required = HardwareScanlineEngine::timingWordsFor(requested);
+        std::vector<std::uint32_t> table(required + 2u, 0xdeadbeefu);
+        const auto untouched = table;
+        auto config = f.config(); config.timingBuffer = table.data() + 1; config.timingBufferWords = required;
+        {
+            HardwareScanlineEngine engine(config);
+            const auto bytes = static_cast<std::size_t>(c.width) * c.height * c.depth / 8u;
+            // Only metadata is inspected; never start DMA for these giant source lengths.
+            CHECK(engine.setPixelSource(f.pixels, bytes, c.depth));
+            const bool accepted = engine.configure(requested);
+            CHECK(!accepted); CHECK(!engine.isRunning());
+            if (!accepted) checkRejectedStart(engine);
+            checkNoPinChanges(); checkReleased(); CHECK_EQ(sdk::recording.calls, 0u);
+            CHECK(table == untouched);
+            CHECK_EQ(sdk::recording.dma[2].count & DMA_CH0_TRANS_COUNT_MODE_BITS, 0u);
+            CHECK_EQ(sdk::recording.triggers, 0u);
+            CHECK(engine.setPixelSource(f.pixels, 4));
+            CHECK(engine.configure(timing)); CHECK(engine.start());
+        }
+        checkReleased();
+    }
+}
+
+PICOTTL_TEST(engineNormalPixelDmaCountBoundaryRemainsRepresentable) {
+    struct Case { std::uint16_t height; std::uint8_t depth; std::uint32_t words; };
+    const Case cases[] = {{16384, 8, 0x0fffc000u}, {16385, 8, 0x0fffffffu},
+        {32768, 4, 0x0fffc000u}, {32770, 4, 0x0fffffffu}};
+    for (const auto& c : cases) {
+        sdk::reset(); Fixture f; auto requested = timing;
+        requested.hActive = 65532; requested.hFrontPorch = 0;
+        requested.hSyncWidth = requested.hBackPorch = 3;
+        requested.vActive = c.height; requested.vFrontPorch = requested.vBackPorch = 0; requested.vSyncWidth = 1;
+        const auto required = HardwareScanlineEngine::timingWordsFor(requested);
+        std::vector<std::uint32_t> table(required + 2u, 0xdeadbeefu);
+        auto config = f.config(); config.timingBuffer = table.data() + 1; config.timingBufferWords = required;
+        {
+            HardwareScanlineEngine engine(config);
+            // This is a count/encoding test, not a physically backed gigabyte framebuffer.
+            // configure() must not trigger or read pixel data; start() is deliberately omitted.
+            const auto bytes = static_cast<std::size_t>(requested.hActive) * c.height * c.depth / 8u;
+            CHECK(engine.setPixelSource(f.pixels, bytes, c.depth)); CHECK(engine.configure(requested));
+            CHECK_EQ(sdk::recording.dma[2].count, c.words);
+            CHECK_EQ(sdk::recording.dma[2].count & DMA_CH0_TRANS_COUNT_MODE_BITS, 0u);
+            CHECK_EQ(sdk::recording.dma[0].count, required);
+            CHECK_EQ(sdk::recording.triggers, 0u);
+            CHECK_EQ(table.front(), 0xdeadbeefu); CHECK_EQ(table.back(), 0xdeadbeefu);
+            engine.stop(); engine.stop(); checkQuiescent(15);
+        }
+        checkReleased();
+    }
+}
+
+PICOTTL_TEST(engineZeroVerticalIntervalsRemainExecutableInSignalOnlyMode) {
+    const std::uint16_t phases[][4] = {{1,0,0,0}, {0,0,1,0}, {0,1,0,0}, {0,0,0,1}, {1,0,1,0}, {0,1,1,1}, {0,0,0,0}};
+    for (const auto& phase : phases) {
+        sdk::reset(); Fixture f; auto requested = timing;
+        requested.hActive = requested.hSyncWidth = requested.hBackPorch = 3; requested.hFrontPorch = 0;
+        requested.vActive = phase[0]; requested.vFrontPorch = phase[1]; requested.vSyncWidth = phase[2]; requested.vBackPorch = phase[3];
+        HardwareScanlineEngine engine(f.config());
+        const bool nonempty = requested.vTotal() != 0;
+        CHECK_EQ(engine.configure(requested), nonempty);
+        if (!nonempty) { checkRejectedStart(engine); checkNoPinChanges(); checkReleased(); continue; }
+        CHECK_EQ(sdk::recording.dma[0].count, requested.vTotal() * 3u);
+        for (unsigned line = 0; line < requested.vTotal(); ++line) {
+            const bool sync = line >= requested.vActive + requested.vFrontPorch &&
+                line < requested.vActive + requested.vFrontPorch + requested.vSyncWidth;
+            const unsigned vs = sync ? 0u : 2u; // active-low VSYNC
+            CHECK_EQ(f.table[line * 3u], vs | (line < requested.vActive ? 4u : 0u));
+            CHECK_EQ(f.table[line * 3u + 1u], vs | 1u);
+            CHECK_EQ(f.table[line * 3u + 2u], vs);
+        }
+        CHECK(engine.start()); engine.stop(); CHECK(!sdk::recording.smClaimed[0][1]);
+    }
+    // Minimum byte/word packing differs with depth; no positive source can cover zero active lines.
+    struct PixelCase { std::uint16_t width, height; std::uint8_t depth; std::size_t bytes; };
+    const PixelCase cases[] = {{8,4,1,4}, {4,4,2,4}, {4,2,4,4}, {3,4,8,12}, {4,1,8,4}};
+    for (const auto& c : cases) {
+        sdk::reset(); Fixture f; auto requested = timing;
+        requested.hActive = c.width; requested.hFrontPorch = 0; requested.hSyncWidth = requested.hBackPorch = 3;
+        requested.vActive = c.height; requested.vFrontPorch = requested.vSyncWidth = requested.vBackPorch = 0;
+        HardwareScanlineEngine engine(f.config());
+        CHECK(engine.setPixelSource(f.pixels, c.bytes, c.depth));
+        auto empty = requested; empty.vActive = 0; empty.vSyncWidth = 1;
+        CHECK(!engine.configure(empty)); checkNoPinChanges(); checkReleased();
+        CHECK(engine.configure(requested)); CHECK(engine.start()); engine.stop();
+        CHECK_EQ(divider256(0), 2u * divider256(1));
+    }
+}
+
+PICOTTL_TEST(engineHorizontalSegmentBoundariesPreserveEncoding) {
+    struct Case { unsigned field; std::uint16_t width; bool valid; };
+    const Case cases[] = {{0,0,false},{0,1,false},{0,2,false},{0,3,true},{0,UINT16_MAX,true},
+        {1,0,true},{1,1,false},{1,2,false},{1,3,true},{1,UINT16_MAX,true},
+        {2,0,false},{2,1,false},{2,2,false},{2,3,true},{2,UINT16_MAX,true},
+        {3,0,false},{3,1,false},{3,2,false},{3,3,true},{3,UINT16_MAX,true}};
+    for (const auto& c : cases) {
+        sdk::reset(); Fixture f; auto requested = timing;
+        switch (c.field) {
+            case 0: requested.hActive = c.width; break;
+            case 1: requested.hFrontPorch = c.width; break;
+            case 2: requested.hSyncWidth = c.width; break;
+            default: requested.hBackPorch = c.width; break;
+        }
+        HardwareScanlineEngine engine(f.config()); CHECK_EQ(engine.configure(requested), c.valid);
+        if (!c.valid) { checkRejectedStart(engine); checkNoPinChanges(); checkReleased(); continue; }
+        const auto segments = HardwareScanlineEngine::segmentsPerLine(requested);
+        for (unsigned line = 0; line < requested.vTotal(); ++line) {
+            unsigned cycles = 0;
+            for (unsigned segment = 0; segment < segments; ++segment) cycles += (f.table[line * segments + segment] >> 3) + 3;
+            CHECK_EQ(cycles, requested.hTotal());
+        }
+        CHECK_EQ(sdk::recording.dma[0].count, requested.vTotal() * segments);
+        CHECK(engine.start()); engine.stop();
+    }
+}
+
+PICOTTL_TEST(engineMaximumTimingComponentsFitSumsTableAndDma) {
+    constexpr VideoTiming maximum{10'000'000,UINT16_MAX,UINT16_MAX,UINT16_MAX,UINT16_MAX,
+        UINT16_MAX,UINT16_MAX,UINT16_MAX,UINT16_MAX,picottl::SyncPolarity::ActiveHigh,picottl::SyncPolarity::ActiveLow};
+    static_assert(maximum.hTotal() == 262140 && maximum.vTotal() == 262140, "Totals exceed 16 bits, not 32 bits");
+    constexpr auto words = HardwareScanlineEngine::timingWordsFor(maximum);
+    static_assert(words == 1048560, "Maximum table fits the normal DMA count field");
+    sdk::reset(); Fixture f;
+    std::vector<std::uint32_t> table(words + 2u, 0xdeadbeefu);
+    auto config = f.config(); config.timingBuffer = table.data() + 1; config.timingBufferWords = words;
+    {
+        HardwareScanlineEngine engine(config); CHECK(engine.configure(maximum));
+        CHECK_EQ(sdk::recording.dma[0].count, words);
+        CHECK(sdk::recording.dma[0].count <= DMA_CH0_TRANS_COUNT_COUNT_BITS);
+        CHECK_EQ(table.front(), 0xdeadbeefu); CHECK_EQ(table.back(), 0xdeadbeefu);
+        bool delaysMatch = true;
+        for (std::size_t i = 1; i <= words; ++i) delaysMatch = delaysMatch && (table[i] >> 3) == UINT16_MAX - 3u;
+        CHECK(delaysMatch);
+        CHECK(engine.start()); engine.stop();
+    }
+    checkReleased();
+}
+
+PICOTTL_TEST(engineRejectedPolarityReconfigurationRetainsOnlyOwnedResources) {
+    sdk::reset(); Fixture f; sdk::recording.dmaClaimed[9] = true;
+    sdk::recording.smClaimed[0][3] = true; sdk::recording.smEnabled[0][3] = true;
+    {
+        HardwareScanlineEngine engine(f.config()); CHECK(engine.setPixelSource(f.pixels, 4));
+        CHECK(engine.configure(timing)); CHECK(engine.start());
+        const auto mux = sdk::recording.gpioConfigurations;
+        const auto claims = sdk::recording.dmaClaimed;
+        const auto stateMachines = sdk::recording.smClaimed;
+        auto invalid = timing; invalid.vSyncPolarity = static_cast<picottl::SyncPolarity>(2);
+        CHECK(!engine.configure(invalid)); checkRejectedStart(engine); checkQuiescent(15);
+        CHECK_EQ(sdk::recording.gpioConfigurations, mux);
+        CHECK(sdk::recording.dmaClaimed == claims); CHECK(sdk::recording.smClaimed == stateMachines);
+        CHECK(sdk::recording.smEnabled[0][3]); CHECK(sdk::recording.dmaClaimed[9]);
+        CHECK(engine.configure(timing)); CHECK(engine.start());
+    }
+    checkReleased(); CHECK(sdk::recording.smClaimed[0][3]); CHECK(sdk::recording.dmaClaimed[9]);
 }
