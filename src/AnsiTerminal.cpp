@@ -54,14 +54,7 @@ void AnsiTerminal::setBellHandler(BellHandler handler, void* user) {
 
 void AnsiTerminal::resetAttributes() {
     state_ = State::Ground;
-    foregroundIndex_ = 0;
-    backgroundIndex_ = 0;
-    foregroundDefault_ = true;
-    backgroundDefault_ = true;
-    bold_ = false;
-    underline_ = false;
-    blink_ = false;
-    reverse_ = false;
+    sgr_ = {};
     applyAttributes();
 }
 
@@ -243,44 +236,37 @@ void AnsiTerminal::dispatchSgr() {
         const std::uint32_t value = parameters_[i];
         switch (value) {
             case 0: // reset
-                foregroundIndex_ = 0;
-                backgroundIndex_ = 0;
-                foregroundDefault_ = true;
-                backgroundDefault_ = true;
-                bold_ = false;
-                underline_ = false;
-                blink_ = false;
-                reverse_ = false;
+                sgr_ = {};
                 break;
             case 1:
-                bold_ = true;
+                sgr_.bold = true;
                 break;
             case 22:
-                bold_ = false;
+                sgr_.bold = false;
                 break;
             case 4:
-                underline_ = true;
+                sgr_.underline = true;
                 break;
             case 24:
-                underline_ = false;
+                sgr_.underline = false;
                 break;
             case 5:
-                blink_ = true;
+                sgr_.blink = true;
                 break;
             case 25:
-                blink_ = false;
+                sgr_.blink = false;
                 break;
             case 7:
-                reverse_ = true;
+                sgr_.reverse = true;
                 break;
             case 27:
-                reverse_ = false;
+                sgr_.reverse = false;
                 break;
             case 39:
-                foregroundDefault_ = true;
+                sgr_.foregroundDefault = true;
                 break;
             case 49:
-                backgroundDefault_ = true;
+                sgr_.backgroundDefault = true;
                 break;
             case 38: // extended foreground: 38;5;n or 38;2;r;g;b
             case 48: // extended background
@@ -296,27 +282,27 @@ void AnsiTerminal::dispatchSgr() {
                 // Mapped to the default color: the palette model is
                 // 16-color; extended colors degrade gracefully.
                 if (isForeground) {
-                    foregroundDefault_ = true;
+                    sgr_.foregroundDefault = true;
                 } else {
-                    backgroundDefault_ = true;
+                    sgr_.backgroundDefault = true;
                 }
                 break;
             }
             default:
                 if (value >= 30 && value <= 37) {
-                    foregroundIndex_ = static_cast<std::uint8_t>(value - 30);
-                    foregroundDefault_ = false;
+                    sgr_.foregroundIndex = static_cast<std::uint8_t>(value - 30);
+                    sgr_.foregroundDefault = false;
                 } else if (value >= 90 && value <= 97) {
-                    foregroundIndex_ =
+                    sgr_.foregroundIndex =
                         static_cast<std::uint8_t>(value - 90 + 8);
-                    foregroundDefault_ = false;
+                    sgr_.foregroundDefault = false;
                 } else if (value >= 40 && value <= 47) {
-                    backgroundIndex_ = static_cast<std::uint8_t>(value - 40);
-                    backgroundDefault_ = false;
+                    sgr_.backgroundIndex = static_cast<std::uint8_t>(value - 40);
+                    sgr_.backgroundDefault = false;
                 } else if (value >= 100 && value <= 107) {
-                    backgroundIndex_ =
+                    sgr_.backgroundIndex =
                         static_cast<std::uint8_t>(value - 100 + 8);
-                    backgroundDefault_ = false;
+                    sgr_.backgroundDefault = false;
                 }
                 break; // Unknown SGR values are ignored.
         }
@@ -325,22 +311,22 @@ void AnsiTerminal::dispatchSgr() {
 }
 
 void AnsiTerminal::applyAttributes() {
-    std::uint8_t fgIndex = foregroundIndex_;
-    if (bold_ && fgIndex < 8) {
+    std::uint8_t fgIndex = sgr_.foregroundIndex;
+    if (sgr_.bold && fgIndex < 8) {
         fgIndex = static_cast<std::uint8_t>(fgIndex + 8); // bold = bright
     }
-    Color foreground = foregroundDefault_
-                           ? (bold_ ? palette_.foreground[15]
+    Color foreground = sgr_.foregroundDefault
+                           ? (sgr_.bold ? palette_.foreground[15]
                                     : palette_.defaultForeground)
                            : palette_.foreground[fgIndex];
-    Color background = backgroundDefault_ ? palette_.defaultBackground
-                                          : palette_.background[backgroundIndex_];
-    if (reverse_) {
+    Color background = sgr_.backgroundDefault ? palette_.defaultBackground
+                                              : palette_.background[sgr_.backgroundIndex];
+    if (sgr_.reverse) {
         const Color swap = foreground;
         foreground = background;
         background = swap;
     }
-    terminal_.setAttributes({foreground, background, underline_, blink_});
+    terminal_.setAttributes({foreground, background, sgr_.underline, sgr_.blink});
 }
 
 void AnsiTerminal::lineFeed() {
@@ -405,9 +391,11 @@ void AnsiTerminal::saveCursor() {
     savedColumn_ = terminal_.cursorX();
     savedRow_ = terminal_.cursorY();
     savedAttributes_ = terminal_.attributes();
+    savedSgr_ = sgr_;
 }
 
 void AnsiTerminal::restoreCursor() {
+    sgr_ = savedSgr_;
     terminal_.setCursor(savedColumn_, savedRow_);
     terminal_.setAttributes(savedAttributes_);
 }
