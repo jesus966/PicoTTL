@@ -284,32 +284,6 @@ PICOTTL_TEST(engineTimingResourceFailuresAllowRetryWithoutStealingOwnership) {
     }
 }
 
-PICOTTL_TEST(enginePixelParameterFailuresCleanUpTheirActualPartialAcquisition) {
-    for (unsigned failure = 0; failure < 6; ++failure) {
-        sdk::reset(); Fixture f;
-        auto config = f.config();
-        switch (failure) {
-            case 0: config.pixelStateMachine = config.stateMachine; break;
-            case 1: config.pixelDmaDataChannel = NUM_DMA_CHANNELS; break;
-            case 2: config.pixelDmaControlChannel = config.pixelDmaDataChannel; break;
-            case 3: config.pixelDmaDataChannel = config.dmaControlChannel; break;
-            case 4: config.hsyncPin = NUM_BANK0_GPIOS - 2; break;
-            default: config.videoPin = config.hsyncPin; break;
-        }
-        {
-            HardwareScanlineEngine engine(config);
-            CHECK(engine.setPixelSource(f.pixels, 4));
-            CHECK(!engine.configure(timing));
-            checkRejectedStart(engine);
-            CHECK(sdk::recording.dmaClaimed[0]);
-            CHECK(sdk::recording.dmaClaimed[1]);
-            engine.stop(); engine.stop();
-            checkQuiescent(failure == 5 ? 15 : 3);
-        }
-        checkReleased();
-    }
-}
-
 PICOTTL_TEST(engineFailedNewAcquisitionQuiescesPreexistingIdleRegisters) {
     sdk::reset(); Fixture f;
     // claim/unclaim changes SDK ownership only, not the register contents.
@@ -549,4 +523,164 @@ PICOTTL_TEST(engineStandardModeClockDividersRemainUnchanged) {
         CHECK_EQ(sdk::recording.invalidDividerCalls, 0u);
         CHECK_EQ(sdk::recording.floatEndpointCalls, 0u);
     }
+}
+
+namespace {
+void checkNoPinChanges() {
+    CHECK_EQ(sdk::recording.gpioConfigurations, 0u);
+    CHECK_EQ(sdk::recording.pinDirections, 0u);
+    CHECK_EQ(sdk::recording.pinWrites, 0u);
+    CHECK_EQ(sdk::recording.padConfigurations, 0u);
+}
+}
+
+PICOTTL_TEST(engineInvalidPixelParametersHaveNoHardwareSideEffects) {
+    for (unsigned failure = 0; failure < 7; ++failure) {
+        sdk::reset(); Fixture f;
+        auto config = f.config();
+        switch (failure) {
+            case 0: config.pixelStateMachine = config.stateMachine; break;
+            case 1: config.pixelDmaDataChannel = NUM_DMA_CHANNELS; break;
+            case 2: config.pixelDmaControlChannel = config.pixelDmaDataChannel; break;
+            case 3: config.pixelDmaDataChannel = config.dmaControlChannel; break;
+            case 4: config.hsyncPin = NUM_BANK0_GPIOS - 2; break;
+            case 5: config.videoPin = config.hsyncPin; break;
+            default: config.videoPin = NUM_BANK0_GPIOS; break;
+        }
+        {
+            HardwareScanlineEngine engine(config);
+            CHECK(engine.setPixelSource(f.pixels, 4));
+            for (unsigned repeat = 0; repeat < 3; ++repeat) {
+                CHECK(!engine.configure(timing));
+                checkRejectedStart(engine);
+                checkNoPinChanges();
+                checkReleased();
+            }
+        }
+        checkReleased();
+    }
+}
+
+PICOTTL_TEST(enginePixelAcquisitionFailuresDoNotTouchPinsAndCanRetry) {
+    for (unsigned failure = 0; failure < 4; ++failure) {
+        sdk::reset(); Fixture f;
+        sdk::recording.smClaimed[0][1] = failure == 0;
+        sdk::recording.dmaClaimed[2] = failure == 1;
+        sdk::recording.dmaClaimed[3] = failure == 2;
+        sdk::recording.allowPixelProgram = failure != 3;
+        {
+            HardwareScanlineEngine engine(f.config());
+            CHECK(engine.setPixelSource(f.pixels, 4));
+            for (unsigned repeat = 0; repeat < 3; ++repeat) {
+                CHECK(!engine.configure(timing));
+                checkRejectedStart(engine);
+                checkNoPinChanges();
+                CHECK(sdk::recording.smClaimed[0][0]); // retained owner, not a leak
+                CHECK(sdk::recording.dmaClaimed[0]);
+                CHECK(sdk::recording.dmaClaimed[1]);
+                CHECK_EQ(sdk::recording.smClaimed[0][1], failure == 0 || failure == 3);
+                CHECK_EQ(sdk::recording.dmaClaimed[2], failure == 1 || failure == 3);
+                CHECK_EQ(sdk::recording.dmaClaimed[3], failure == 2 || failure == 3);
+                checkQuiescent(3);
+            }
+            sdk::recording.smClaimed[0][1] = failure == 3;
+            sdk::recording.dmaClaimed[2] = failure == 3;
+            sdk::recording.dmaClaimed[3] = failure == 3;
+            sdk::recording.allowPixelProgram = true;
+            CHECK(engine.configure(timing)); CHECK(engine.start());
+            engine.stop(); CHECK(engine.start());
+            CHECK_EQ((dma_hw->ch[0].ctrl_trig & DMA_CH0_CTRL_TRIG_CHAIN_TO_BITS) >> 13, 1u);
+            CHECK_EQ((dma_hw->ch[2].ctrl_trig & DMA_CH0_CTRL_TRIG_CHAIN_TO_BITS) >> 13, 3u);
+        }
+        checkReleased();
+    }
+}
+
+PICOTTL_TEST(engineSdkProgramAddErrorsNeverBecomeConfigurations) {
+    for (unsigned failure = 0; failure < 2; ++failure) {
+        sdk::reset(); Fixture f;
+        sdk::recording.failTimingProgramAdd = failure == 0;
+        sdk::recording.failPixelProgramAdd = failure == 1;
+        {
+            HardwareScanlineEngine engine(f.config());
+            CHECK(engine.setPixelSource(f.pixels, 4));
+            CHECK(!engine.configure(timing));
+            checkRejectedStart(engine);
+            checkNoPinChanges();
+            CHECK_EQ(sdk::recording.invalidPc, 0u);
+            CHECK(!sdk::recording.programs[0][1]);
+            sdk::recording.failTimingProgramAdd = false;
+            sdk::recording.failPixelProgramAdd = false;
+            CHECK(engine.configure(timing)); CHECK(engine.start());
+        }
+        checkReleased();
+    }
+}
+
+PICOTTL_TEST(engineFailedDepthReconfigurationPreservesPinsAndOwnedResources) {
+    for (bool addError : {false, true}) {
+        sdk::reset(); Fixture f;
+        sdk::recording.smClaimed[0][2] = true;
+        sdk::recording.smEnabled[0][2] = true;
+        sdk::recording.dmaClaimed[9] = true;
+        dma_hw->ch[9].ctrl_trig = DMA_CH0_CTRL_TRIG_EN_BITS;
+        {
+            HardwareScanlineEngine engine(f.config());
+            CHECK(engine.setPixelSource(f.pixels, 4));
+            CHECK(engine.configure(timing)); CHECK(engine.start()); engine.stop();
+            const auto mux = sdk::recording.gpioConfigurations;
+            const auto directions = sdk::recording.pinDirections;
+            const auto writes = sdk::recording.pinWrites;
+            const auto pads = sdk::recording.padConfigurations;
+            const auto claims = sdk::recording.dmaClaimed;
+            const auto stateMachines = sdk::recording.smClaimed;
+            CHECK(engine.setPixelSource(f.pixels, 8, 2));
+            sdk::recording.allowPixelProgram = addError;
+            sdk::recording.failPixelProgramAdd = addError;
+            for (unsigned repeat = 0; repeat < 3; ++repeat) {
+                CHECK(!engine.configure(timing));
+                checkRejectedStart(engine);
+                checkQuiescent(15);
+                CHECK(sdk::recording.dmaClaimed == claims);
+                CHECK(sdk::recording.smClaimed == stateMachines);
+                CHECK_EQ(sdk::recording.gpioConfigurations, mux);
+                CHECK_EQ(sdk::recording.pinDirections, directions);
+                CHECK_EQ(sdk::recording.pinWrites, writes);
+                CHECK_EQ(sdk::recording.padConfigurations, pads);
+                CHECK(sdk::recording.smEnabled[0][2]);
+                CHECK_EQ(dma_hw->ch[9].ctrl_trig, DMA_CH0_CTRL_TRIG_EN_BITS);
+            }
+            sdk::recording.allowPixelProgram = true;
+            sdk::recording.failPixelProgramAdd = false;
+            CHECK(engine.configure(timing)); CHECK(engine.start());
+            CHECK(sdk::recording.programs[0][2]);
+            CHECK_EQ(sdk::recording.dma[2].count, 2u);
+            engine.stop(); CHECK(engine.start());
+            CHECK_EQ((dma_hw->ch[2].ctrl_trig & DMA_CH0_CTRL_TRIG_CHAIN_TO_BITS) >> 13, 3u);
+        }
+        checkReleased();
+        CHECK(sdk::recording.smClaimed[0][2]);
+        CHECK(sdk::recording.smEnabled[0][2]);
+        CHECK(sdk::recording.dmaClaimed[9]);
+        CHECK_EQ(dma_hw->ch[9].ctrl_trig, DMA_CH0_CTRL_TRIG_EN_BITS);
+    }
+}
+
+PICOTTL_TEST(engineInvalidPixelConfigurationDoesNotBlockAnotherEngine) {
+    sdk::reset(); Fixture f;
+    auto bad = f.config(); bad.videoPin = bad.hsyncPin;
+    HardwareScanlineEngine rejected(bad);
+    CHECK(rejected.setPixelSource(f.pixels, 4));
+    CHECK(!rejected.configure(timing));
+    checkReleased(); checkNoPinChanges();
+    {
+        HardwareScanlineEngine valid(f.config());
+        CHECK(valid.setPixelSource(f.pixels, 4));
+        CHECK(valid.configure(timing)); CHECK(valid.start());
+        rejected.stop();
+        CHECK(valid.isRunning());
+        CHECK(sdk::recording.smEnabled[0][0]);
+        CHECK((dma_hw->ch[0].ctrl_trig & DMA_CH0_CTRL_TRIG_BUSY_BITS) != 0);
+    }
+    checkReleased();
 }

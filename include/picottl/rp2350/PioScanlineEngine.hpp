@@ -85,6 +85,9 @@ public:
     /// Stops owned hardware and invalidates the previous configuration.
     /// Every failure stops all owned paths, including newly acquired ones;
     /// start() returns false until configure() succeeds again.
+    /// Invalid hardware parameters are rejected before acquisition. GPIO
+    /// setup is deferred until resource acquisition and program installation
+    /// succeed. Stopping existing output may still drive its idle levels.
     /// Partially acquired resources remain owned for retry or destruction;
     /// the old timing table/programs are not restored. Calls must be serialized.
     bool configure(const VideoTiming& timing);
@@ -115,6 +118,7 @@ public:
 private:
     bool buildTimingBuffer(const VideoTiming& timing);
     bool prepareClockConfig(const VideoTiming& timing);
+    bool hardwareConfigValid() const;
     bool acquireHardware();
     bool acquirePixelHardware();
     bool preparePixelProgram();

@@ -38,6 +38,8 @@ struct Recording {
     std::array<std::array<bool, 5>, 3> programs{};
     std::array<DmaCall, 16> dma{};
     bool allowTimingProgram = true, allowPixelProgram = true;
+    bool failTimingProgramAdd = false, failPixelProgramAdd = false;
+    unsigned pinDirections = 0, pinWrites = 0, padConfigurations = 0;
     unsigned calls = 0, triggers = 0, aborts = 0, releases = 0;
     unsigned invalidPc = 0, abortWhileEnabled = 0;
     unsigned clockReads = 0, dividerCalls = 0, integerDividerCalls = 0;
@@ -103,7 +105,7 @@ inline void pio_sm_unclaim(PIO p, uint sm) { ++p->sdkCalls; auto& r = picottl_te
 inline void pio_sm_set_enabled(PIO p, uint sm, bool enabled) { ++p->sdkCalls; auto& r = picottl_test::sdk::recording; r.smEnabled[picottl_test::sdk::index(p)][sm] = enabled; ++r.calls; }
 inline void pio_enable_sm_mask_in_sync(PIO p, uint mask) { ++p->sdkCalls; for (uint sm = 0; sm < 4; ++sm) if ((mask & (1u << sm)) != 0) pio_sm_set_enabled(p, sm, true); }
 inline bool pio_can_add_program(PIO, const pio_program_t* program) { return program->id == 0 ? picottl_test::sdk::recording.allowTimingProgram : picottl_test::sdk::recording.allowPixelProgram; }
-inline uint pio_add_program(PIO p, const pio_program_t* program) { ++p->sdkCalls; auto& r = picottl_test::sdk::recording; assert(pio_can_add_program(p, program)); assert(!r.programs[picottl_test::sdk::index(p)][program->id]); r.programs[picottl_test::sdk::index(p)][program->id] = true; ++r.calls; return program->id * 4; }
+inline int pio_add_program(PIO p, const pio_program_t* program) { ++p->sdkCalls; auto& r = picottl_test::sdk::recording; assert(pio_can_add_program(p, program)); if (program->id == 0 ? r.failTimingProgramAdd : r.failPixelProgramAdd) return -1; assert(!r.programs[picottl_test::sdk::index(p)][program->id]); r.programs[picottl_test::sdk::index(p)][program->id] = true; ++r.calls; return static_cast<int>(program->id * 4); }
 inline void pio_remove_program(PIO p, const pio_program_t* program, uint offset) { ++p->sdkCalls; auto& r = picottl_test::sdk::recording; assert(offset == program->id * 4); assert(r.programs[picottl_test::sdk::index(p)][program->id]); r.programs[picottl_test::sdk::index(p)][program->id] = false; ++r.calls; }
 inline void pio_sm_init(PIO p, uint sm, uint pc, const pio_sm_config* c) {
     ++p->sdkCalls;
@@ -120,11 +122,11 @@ inline void pio_sm_clear_fifos(PIO, uint) { ++picottl_test::sdk::recording.calls
 inline void pio_sm_restart(PIO, uint) { ++picottl_test::sdk::recording.calls; }
 inline void pio_sm_exec(PIO, uint, uint) { ++picottl_test::sdk::recording.calls; }
 inline void pio_sm_put(PIO, uint, std::uint32_t) { ++picottl_test::sdk::recording.calls; }
-inline void pio_sm_set_pins_with_mask(PIO, uint, std::uint32_t, std::uint32_t) { ++picottl_test::sdk::recording.calls; }
-inline void pio_sm_set_consecutive_pindirs(PIO, uint, uint, uint, bool) { ++picottl_test::sdk::recording.calls; }
+inline void pio_sm_set_pins_with_mask(PIO, uint, std::uint32_t, std::uint32_t) { ++picottl_test::sdk::recording.calls; ++picottl_test::sdk::recording.pinWrites; }
+inline void pio_sm_set_consecutive_pindirs(PIO, uint, uint, uint, bool) { ++picottl_test::sdk::recording.calls; ++picottl_test::sdk::recording.pinDirections; }
 inline void pio_gpio_init(PIO, uint) { ++picottl_test::sdk::recording.calls; ++picottl_test::sdk::recording.gpioConfigurations; }
-inline void gpio_set_drive_strength(uint, uint) { ++picottl_test::sdk::recording.calls; }
-inline void gpio_set_slew_rate(uint, uint) { ++picottl_test::sdk::recording.calls; }
+inline void gpio_set_drive_strength(uint, uint) { ++picottl_test::sdk::recording.calls; ++picottl_test::sdk::recording.padConfigurations; }
+inline void gpio_set_slew_rate(uint, uint) { ++picottl_test::sdk::recording.calls; ++picottl_test::sdk::recording.padConfigurations; }
 inline uint pio_encode_jmp(uint pc) { if (pc >= 32) ++picottl_test::sdk::recording.invalidPc; return 0; }
 inline uint pio_encode_pull(bool, bool) { return 0; }
 inline uint pio_encode_mov(uint, uint) { return 0; }

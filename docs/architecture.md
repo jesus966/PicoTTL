@@ -315,9 +315,16 @@ The internal RP2350 scanline engine uses invalidating configuration:
 configuration. A failure leaves the engine stopped; `start()` rejects it
 until a subsequent `configure()` succeeds. Error exits also stop hardware
 claimed during that attempt: SDK resource claims do not reset its registers.
-Timing-table contents, GPIO setup
-and PIO programs are not rolled back. Resources acquired before failure remain
-owned for a retry and are released on engine destruction. Callers must keep
+Hardware parameters (including pixel pin spans and resource conflicts within
+one configuration) are validated before acquisition. GPIO mux, pad and output
+direction setup is deferred until resource acquisition and PIO program
+installation succeed. Resource exhaustion or a rejected configuration therefore
+does not newly configure the pins. Stopping previously running output still
+drives its configured idle levels; previous pin state is not restored.
+Timing-table contents and PIO programs are not rolled back. Resources acquired
+before a later acquisition/program failure remain owned for a retry and are
+released on engine destruction. `end()` stops output but preserves ownership
+for reuse; it does not release pins to their former users. Callers must keep
 the timing buffer and pixel storage alive as required by the engine, serialize
 lifecycle calls, and must not treat a rejected configuration as permission to
 reuse channels or state machines still owned by that instance.

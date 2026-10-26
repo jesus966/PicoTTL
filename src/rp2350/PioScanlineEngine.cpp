@@ -191,7 +191,7 @@ bool PioScanlineEngine::configure(const VideoTiming& timing) {
     if (!buildTimingBuffer(timing)) {
         return reject();
     }
-    if (!prepareClockConfig(timing)) {
+    if (!prepareClockConfig(timing) || !hardwareConfigValid()) {
         return reject();
     }
     timing_ = timing;
@@ -407,7 +407,7 @@ bool PioScanlineEngine::buildTimingBuffer(const VideoTiming& timing) {
     return true;
 }
 
-bool PioScanlineEngine::acquireHardware() {
+bool PioScanlineEngine::hardwareConfigValid() const {
     if (config_.pioInstance >= NUM_PIOS ||
         config_.stateMachine >= NUM_PIO_STATE_MACHINES ||
         config_.dmaDataChannel >= NUM_DMA_CHANNELS ||
@@ -417,31 +417,9 @@ bool PioScanlineEngine::acquireHardware() {
         return false;
     }
 
-    PIO pio = pio_get_instance(config_.pioInstance);
-
-    // Fail gracefully instead of hitting the SDK's claim asserts.
-    if (pio_sm_is_claimed(pio, config_.stateMachine) ||
-        dma_channel_is_claimed(config_.dmaDataChannel) ||
-        dma_channel_is_claimed(config_.dmaControlChannel) ||
-        !pio_can_add_program(pio, &ttl_timing_program)) {
-        return false;
+    if (pixelSource_ == nullptr) {
+        return true;
     }
-
-    pio_sm_claim(pio, config_.stateMachine);
-    dma_channel_claim(config_.dmaDataChannel);
-    dma_channel_claim(config_.dmaControlChannel);
-    programOffset_ = pio_add_program(pio, &ttl_timing_program);
-
-    pio_gpio_init(pio, config_.hsyncPin);
-    pio_gpio_init(pio, config_.hsyncPin + 1u);
-    configureMonitorPad(config_.hsyncPin);
-    configureMonitorPad(config_.hsyncPin + 1u);
-    pio_sm_set_consecutive_pindirs(pio, config_.stateMachine,
-                                   config_.hsyncPin, 2, true);
-    return true;
-}
-
-bool PioScanlineEngine::acquirePixelHardware() {
     const std::uint32_t displayEnablePin = config_.hsyncPin + 2u;
 
     if (config_.pixelStateMachine >= NUM_PIO_STATE_MACHINES ||
@@ -457,6 +435,40 @@ bool PioScanlineEngine::acquirePixelHardware() {
         return false;
     }
 
+    const std::uint32_t videoLastPin = config_.videoPin + pixelPinCount_ - 1u;
+    // The video pin span must exist and not overlap the sync/handshake
+    // pins.
+    if (videoLastPin >= NUM_BANK0_GPIOS ||
+        (videoLastPin >= config_.hsyncPin &&
+         config_.videoPin <= displayEnablePin)) {
+        return false;
+    }
+
+    return true;
+}
+
+bool PioScanlineEngine::acquireHardware() {
+    PIO pio = pio_get_instance(config_.pioInstance);
+
+    // Fail gracefully instead of hitting the SDK's claim asserts.
+    if (pio_sm_is_claimed(pio, config_.stateMachine) ||
+        dma_channel_is_claimed(config_.dmaDataChannel) ||
+        dma_channel_is_claimed(config_.dmaControlChannel) ||
+        !pio_can_add_program(pio, &ttl_timing_program)) {
+        return false;
+    }
+
+    programOffset_ = pio_add_program(pio, &ttl_timing_program);
+    if (programOffset_ < 0) {
+        return false;
+    }
+    pio_sm_claim(pio, config_.stateMachine);
+    dma_channel_claim(config_.dmaDataChannel);
+    dma_channel_claim(config_.dmaControlChannel);
+    return true;
+}
+
+bool PioScanlineEngine::acquirePixelHardware() {
     PIO pio = pio_get_instance(config_.pioInstance);
 
     if (pio_sm_is_claimed(pio, config_.pixelStateMachine) ||
@@ -469,13 +481,6 @@ bool PioScanlineEngine::acquirePixelHardware() {
     dma_channel_claim(config_.pixelDmaDataChannel);
     dma_channel_claim(config_.pixelDmaControlChannel);
 
-    // The display-enable GPIO is driven by the timing state machine and
-    // read back internally by the pixel state machine. It is never wired
-    // to the monitor. Depth-dependent setup (program, video pins) lives
-    // in preparePixelProgram().
-    pio_gpio_init(pio, displayEnablePin);
-    pio_sm_set_consecutive_pindirs(pio, config_.stateMachine,
-                                   displayEnablePin, 1, true);
     return true;
 }
 
@@ -483,16 +488,6 @@ bool PioScanlineEngine::preparePixelProgram() {
     PIO pio = pio_get_instance(config_.pioInstance);
     const std::uint8_t bpp = pixelBitsPerPixel_;
     const std::uint32_t videoLastPin = config_.videoPin + pixelPinCount_ - 1u;
-    const std::uint32_t displayEnablePin = config_.hsyncPin + 2u;
-
-    // The video pin span must exist and not overlap the sync/handshake
-    // pins.
-    if (videoLastPin >= NUM_BANK0_GPIOS ||
-        (videoLastPin >= config_.hsyncPin &&
-         config_.videoPin <= displayEnablePin)) {
-        return false;
-    }
-
     if (loadedPixelProgramBpp_ != bpp) {
         if (pixelProgramOffset_ >= 0) {
             pio_remove_program(pio, pixelProgramFor(loadedPixelProgramBpp_),
@@ -505,6 +500,9 @@ bool PioScanlineEngine::preparePixelProgram() {
             return false;
         }
         pixelProgramOffset_ = pio_add_program(pio, program);
+        if (pixelProgramOffset_ < 0) {
+            return false;
+        }
         loadedPixelProgramBpp_ = bpp;
     }
 
@@ -566,6 +564,8 @@ void PioScanlineEngine::applyPioConfig() {
     // pixel pins already get the same treatment in preparePixelProgram().
     pio_gpio_init(pio, config_.hsyncPin);
     pio_gpio_init(pio, config_.hsyncPin + 1u);
+    configureMonitorPad(config_.hsyncPin);
+    configureMonitorPad(config_.hsyncPin + 1u);
     if (pixelSource_ != nullptr) {
         pio_gpio_init(pio, config_.hsyncPin + 2u); // display-enable
     }
