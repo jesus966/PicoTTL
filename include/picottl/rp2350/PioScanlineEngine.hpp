@@ -151,7 +151,7 @@ private:
     std::uint8_t loadedPixelProgramBpp_ = 0; ///< Depth of the loaded pixel program (0 = none).
     int pixelProgramOffset_ = -1;
     bool pixelHardwareAcquired_ = false;
-    float timingClockDivider_ = 0.0f;
+    std::uint32_t timingClockDivider256_ = 0; ///< Selected divider in units of 1/256.
 };
 
 } // namespace picottl::rp2350

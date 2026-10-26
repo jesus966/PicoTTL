@@ -757,12 +757,32 @@ peripherals) without any change to the public API.
   Configuration requires positive nominal pixel and SDK-reported system
   frequencies, with their exact ratio in the PIO divider range [1, 65536].
   The divider has 16 integer and 8 fractional bits; integer/fraction 0/0
-  represents 65536. With a framebuffer, the pixel state machine uses half
-  the selected timing divider, which must also be in range after integer
-  snapping. Unrepresentable clocks are rejected before PIO/DMA setup;
+  represents 65536. Each timing-table segment takes exactly its requested
+  number of timing-SM cycles; every packed pixel program takes two pixel-SM
+  cycles per pixel, independent of depth. Consequently, the **encoded timing
+  divider must equal twice the encoded pixel divider**.
+  With a framebuffer, integer snapping is applied first as above, then the
+  pixel divider is quantized once using the SDK rounding policy (nearest by
+  default in SDK 2.3.0; truncation if configured). The timing divider is twice
+  that fixed-point result. Both registers are written as explicit integer/
+  fraction fields, avoiding independent rounding. Thus the timing divider
+  has 1/128 resolution on the pixel path; signal-only output retains 1/256.
+  Both selected dividers must remain in [1, 65536], so pixel output requires
+  a timing divider of at least 2 after snapping. The 65536 endpoint still
+  uses integer/fraction 0/0. Integer-snapped clocks remain unchanged; otherwise
+  the timing frequency may move slightly to match the quantized pixel rate.
+  Unsnapped pixel quantization contributes less than 0.4% frequency error
+  over the supported divider range (less than 0.2% with nearest rounding).
+  Unrepresentable clocks are rejected before PIO/DMA setup;
   as with other configuration failures, the engine remains stopped and
   requires a successful configuration before starting. The application
   must keep the system clock stable after configuration and during output.
+  `start()` enables the two state machines together with divider phases
+  aligned. Display-enable gates pixel output on each visible line; this
+  provides per-line synchronization, not compensation for mismatched divider
+  rates. Coherent dividers remove the rate discrepancy but do not eliminate
+  fractional-cycle jitter, instruction latency or FIFO stalls. Physical
+  signal and pixel-position validation remains necessary.
 - HSYNC and VSYNC must be adjacent GPIOs (a constraint of consecutive PIO
   OUT pins) - validated at configuration time.
 - The pixel path uses a second state machine synchronized to the sync

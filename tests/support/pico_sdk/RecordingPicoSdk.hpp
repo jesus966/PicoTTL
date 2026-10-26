@@ -25,6 +25,7 @@ constexpr uint pio_y = 1, pio_osr = 2, pio_null = 3;
 struct pio_program_t { uint id; };
 struct pio_sm_config {
     float divider = 1;
+    std::uint32_t clkdiv = 0x00010000;
     bool fullPeriodEncoded = false;
     int outPin = -1, inPin = -1;
     uint outCount = 0;
@@ -42,6 +43,7 @@ struct DmaCall {
 };
 struct Recording {
     std::uint32_t clockHz = 130'000'000;
+    bool roundDividerNearest = true; // SDK 2.3.0 default; false models its truncation option.
     std::array<bool, 16> dmaClaimed{};
     std::array<std::array<bool, 4>, 3> smClaimed{}, smEnabled{};
     std::array<std::array<bool, 5>, 3> programs{};
@@ -55,6 +57,7 @@ struct Recording {
     unsigned invalidDividerCalls = 0, floatEndpointCalls = 0, gpioConfigurations = 0;
     std::array<std::array<unsigned, 4>, 3> pioConfigurations{};
     std::array<std::array<float, 4>, 3> dividers{};
+    std::array<std::array<std::uint32_t, 4>, 3> clkdivRegisters{};
     std::array<std::array<bool, 4>, 3> fullPeriodEncoded{};
     std::array<uint, 3> gpioBase{};
     std::array<int, 48> gpioFunction{};
@@ -138,6 +141,7 @@ inline void pio_sm_init(PIO p, uint sm, uint pc, const pio_sm_config* c) {
     if (pc >= 32) ++r.invalidPc;
     ++r.pioConfigurations[instance][sm];
     r.dividers[instance][sm] = c->divider;
+    r.clkdivRegisters[instance][sm] = c->clkdiv;
     r.fullPeriodEncoded[instance][sm] = c->fullPeriodEncoded;
     pio_sm_set_enabled(p, sm, false);
 }
@@ -184,14 +188,30 @@ inline void sm_config_set_out_pins(pio_sm_config* c, uint pin, uint count) { c->
 inline void sm_config_set_in_pins(pio_sm_config* c, uint pin) { c->inPin = static_cast<int>(pin); }
 inline void sm_config_set_out_shift(pio_sm_config*, bool, bool, uint) {}
 inline void sm_config_set_fifo_join(pio_sm_config*, uint) {}
+// Mirrors SDK 2.3.0 pio_calculate_clkdiv8_from_float, including optional
+// nearest rounding. Record an unsafe upper-endpoint conversion instead of
+// executing it; production must use explicit integer/fraction encoding there.
+inline void pio_calculate_clkdiv8_from_float(float divider, std::uint32_t* integer,
+                                            std::uint8_t* fraction) {
+    auto& r = picottl_test::sdk::recording;
+    if (!(divider >= 1 && divider <= 65536)) ++r.invalidDividerCalls;
+    if (r.roundDividerNearest) divider += 0.5f / 256.0f;
+    if (!(divider >= 1 && divider < 65536)) {
+        ++r.floatEndpointCalls;
+        *integer = 0; *fraction = 0;
+        return;
+    }
+    *integer = static_cast<std::uint16_t>(divider);
+    *fraction = static_cast<std::uint8_t>((divider - static_cast<float>(*integer)) * 256.0f);
+}
 inline void sm_config_set_clkdiv(pio_sm_config* c, float divider) {
     auto& r = picottl_test::sdk::recording;
     ++r.dividerCalls;
-    if (!(divider >= 1 && divider <= 65536)) ++r.invalidDividerCalls;
-    // The SDK float helper narrows through uint16 even at its upper endpoint.
-    // Record the call without executing that unsafe conversion on host.
-    if (divider == 65536) ++r.floatEndpointCalls;
-    c->divider = divider;
+    std::uint32_t integer;
+    std::uint8_t fraction;
+    pio_calculate_clkdiv8_from_float(divider, &integer, &fraction);
+    c->clkdiv = (integer << 16) | (static_cast<std::uint32_t>(fraction) << 8);
+    c->divider = divider; // requested value, alongside the actual encoded register
     c->fullPeriodEncoded = false;
 }
 inline void sm_config_set_clkdiv_int_frac8(pio_sm_config* c, std::uint32_t integer,
@@ -199,6 +219,7 @@ inline void sm_config_set_clkdiv_int_frac8(pio_sm_config* c, std::uint32_t integ
     auto& r = picottl_test::sdk::recording;
     ++r.dividerCalls; ++r.integerDividerCalls;
     if (integer > 65535 || (integer == 0 && fraction != 0)) ++r.invalidDividerCalls;
+    c->clkdiv = (integer << 16) | (static_cast<std::uint32_t>(fraction) << 8);
     c->fullPeriodEncoded = integer == 0 && fraction == 0;
     c->divider = c->fullPeriodEncoded ? 65536.0f
         : static_cast<float>(integer) + static_cast<float>(fraction) / 256.0f;
