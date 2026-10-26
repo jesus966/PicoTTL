@@ -80,6 +80,9 @@ public:
         /// GPIOs; however, THIS backend's PIO output mapping does
         /// require the active format's pins to be consecutive ascending
         /// GPIOs - an RP2350 implementation detail validated at begin().
+        /// Nonnegative entries for active pixel bits must name existing GPIOs
+        /// in the selected PIO window; invalid values are rejected, never
+        /// truncated. Entries for unused bits do not affect begin().
         std::array<std::int16_t, kMaxPixelBits> pixelPins{
             -1, -1, -1, -1, -1, -1, -1, -1};
         /// Pixel storage scanned out by the device, or nullptr for
