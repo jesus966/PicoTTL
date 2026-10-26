@@ -39,7 +39,10 @@ PioScanlineEngine::Config engineConfigFrom(const MdaDisplayDevice::Config& confi
     engineConfig.hsyncPin = config.hsyncPin;
     // The engine implements the consecutive PIO pin mapping; its base
     // pin is the GPIO of pixel value bit 0.
-    engineConfig.videoPin = config.pixelPins[0] >= 0
+    // Unrepresentable explicit values are rejected by begin() on the pixel
+    // path. Keep the shorthand for the unused signal-only path, never truncate.
+    engineConfig.videoPin = config.pixelPins[0] >= 0 &&
+                                   config.pixelPins[0] <= UINT8_MAX
                                 ? static_cast<std::uint8_t>(config.pixelPins[0])
                                 : config.videoPin;
     engineConfig.timingBuffer = timingTable;
@@ -92,6 +95,9 @@ bool MdaDisplayDevice::begin(VideoMode mode) {
         // be consecutive ascending GPIOs. Arbitrary mappings fail here
         // explicitly.
         const unsigned bits = bitsPerPixel(format);
+        if (pixelPins_[0] > UINT8_MAX) {
+            return false;
+        }
         for (unsigned bit = 1; bit < bits; ++bit) {
             if (pixelPins_[bit] !=
                 static_cast<std::int16_t>(pixelPins_[0] + bit)) {
