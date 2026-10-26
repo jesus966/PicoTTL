@@ -41,6 +41,9 @@
 namespace picottl::rp2350 {
 
 /// PIO + DMA raster generator for the RP2350 (internal).
+/// All lifecycle calls, source changes, queries and destruction must be
+/// serialized against concurrent mutation. There is no core-affinity check
+/// or object lock; SDK claim locks do not make configure() a transaction.
 class PioScanlineEngine final {
 public:
     /// Hardware resources used by the engine. The engine never selects

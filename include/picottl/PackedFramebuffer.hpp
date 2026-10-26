@@ -39,6 +39,14 @@ namespace picottl {
 /// Note: backends that scan the framebuffer out by DMA require 4-byte
 /// aligned storage (use alignas as above). The framework never
 /// allocates: the application provides (and owns) the storage.
+///
+/// No internal locking or atomics. At 1/2/4/6 bpp, distinct pixels can share
+/// a byte updated by read-modify-write; 6-bpp fields can span two bytes.
+/// Serialize overlapping CPU byte accesses, including reads versus writes.
+/// Eight-bit pixels use distinct bytes, but bulk operations and aliased
+/// wrappers/contexts can still overlap. DMA alignment does not make pixel
+/// operations atomic. Live SRAM drawing during DMA scanout permits tearing;
+/// it requires stable storage and does not synchronize multiple CPU writers.
 template <unsigned BitsPerPixel>
 class PackedFramebuffer final : public Framebuffer {
     static_assert(BitsPerPixel == 1 || BitsPerPixel == 2 ||

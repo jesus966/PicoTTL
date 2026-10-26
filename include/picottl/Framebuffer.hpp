@@ -26,6 +26,12 @@ namespace picottl {
 /// keeps seeing only DisplaySurface; display backends accept any
 /// Framebuffer and validate pixelFormat() at runtime - they never
 /// require concrete framebuffer classes.
+///
+/// Storage is borrowed, not reference-counted. While DMA scans it, the
+/// descriptor and storage must remain valid; CPU writes may appear mid-frame.
+/// Before retiring a scanned buffer, stop its output, detach the binding and
+/// ensure all CPU users are quiescent. Raw data access grants no synchronization or
+/// lifetime protection. External/cached memory needs platform-specific care.
 class Framebuffer : public DisplaySurface {
 public:
     /// Storage pixel format.

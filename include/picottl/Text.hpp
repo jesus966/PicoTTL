@@ -38,6 +38,10 @@ class Graphics;
 
 /// Character output on a fixed cell grid over a Graphics context.
 ///
+/// Cursor, font and style state are mutable and unsynchronized. Calls require
+/// a single owner or external serialization, including Terminal/ANSI clients
+/// and other contexts that draw into overlapping surface storage.
+///
 /// FROZEN SCOPE: Text is a pure character renderer. Terminal behaviour
 /// (cursor display, blinking, auto-scroll, cell state) lives in
 /// picottl::Terminal; anything higher (ANSI, consoles, widgets) is

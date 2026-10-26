@@ -39,6 +39,10 @@ class DisplaySurface;
 /// Obtain one from Display::graphics(), or construct one directly over
 /// any DisplaySurface (e.g. an off-screen framebuffer, or a mock in
 /// unit tests).
+///
+/// No internal synchronization. Rebinding or destruction must not race drawing
+/// or geometry queries. Separate Graphics objects do not isolate shared pixel
+/// storage; callers must coordinate every overlapping surface access.
 class Graphics {
 public:
     /// Binds the given surface (nullptr = unbound; operations no-op).

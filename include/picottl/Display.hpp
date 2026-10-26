@@ -25,6 +25,10 @@ namespace picottl {
 /// video modes, graphics, text and framebuffers. All hardware concerns
 /// live inside the injected DisplayDevice backend.
 ///
+/// No internal synchronization. Serialize lifecycle, rebinding and destruction
+/// with all users of the device and retained Graphics/Text contexts. Getters
+/// do not make concurrent mutation safe; use an application ownership protocol.
+///
 /// Usage:
 ///   picottl::rp2350::MdaDisplayDevice device(config);
 ///   picottl::Display display(device);

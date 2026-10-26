@@ -263,6 +263,98 @@ to remain alive. Make framebuffer changes through `Display::setFramebuffer()`
 when using its drawing context: direct backend changes bypass this synchronization.
 No ownership is transferred, and framebuffer memory must outlive its wrapper.
 
+### Concurrency and multicore ownership
+
+PicoTTL supplies no object locks or atomic state fields and does not promise
+thread-safe shared-object mutation. Prefer one owner core for a display and
+its rendering contexts. Lifecycle methods can run on either core after a
+synchronized ownership handoff; they must not run concurrently. The same
+rules apply to interrupt reentrancy, not just the second core. These are caller
+obligations, not runtime ownership checks.
+
+| State or resource | Access and ownership contract |
+|---|---|
+| Immutable mode/color/font data and pure value helpers | Concurrent reads are safe while data is available. Publish shared objects before use; do not mutate or destroy them concurrently. |
+| Framebuffer descriptor/geometry | Read-sharing requires stable lifetime and binding. `data()` returns a borrowed pointer, not a lock or lease. |
+| Pixel storage | Serialize overlapping CPU reads/writes. CPU writes to live scanned SRAM are intended, with possible tearing; DMA is not a C++ caller and does not acquire a CPU lock. |
+| `Display`, devices and engine | Serialize begin/end, configure/start/stop, source changes, destruction and queries that race mutation. Coordinate shared PIO/DMA/GPIO/clock resources across instances and non-PicoTTL users. |
+| `Graphics`, `Text`, `Terminal`, `AnsiTerminal` | Bindings, cursor/style/font/parser state, cells and rendering have no internal synchronization. Separate contexts may still alias the same storage. |
+| Timing tables and DMA control-source words | Owned by the device/engine and read asynchronously by DMA. Do not access or change them externally; stop/reconfigure through the serialized lifecycle. |
+| Application static devices/buffers | Static lifetime supplies neither exclusive ownership nor synchronization. The shipped applications do not launch core 1. |
+
+Pixels at different coordinates are not necessarily different memory
+locations. Mono1/Packed2/Packed4 share bytes; Packed6 also has fields crossing
+byte boundaries (it is not scanned directly by the RP2350 backends). Two
+read-modify-write operations can both read byte `00`, compute mono pixel
+updates `80` and `40`, then store `80` followed by `40`, losing the first pixel.
+CPU data races are undefined C++, regardless of machine load/store atomicity.
+Four-byte DMA alignment does not make these operations atomic. Packed8 direct
+pixel stores use separate bytes for separate pixels, but that alone does not
+establish a general concurrent-drawing contract. Any advanced partitioning
+must prove disjoint **byte read/write footprints**, including padding and all
+bulk operations; PicoTTL does not validate such a partition.
+
+`clear`/`fill`, rectangle/bitmap/text drawing, inversion and row copying can
+span or read multiple pixels. `memmove` handles overlap within one call, not
+concurrent calls. Text scrolling, terminal cursor/blink updates and ANSI
+processing also mutate shared state. Serialize the complete operation, not
+just individual pixel stores. Read-only queries are safe only while the
+state/data they read is stable; `isActive()` is not an atomic ready flag.
+
+Rendering while PIO/DMA scan SRAM is separate from CPU/CPU concurrency. A
+frame can contain old and new rows/pixels, and DMA may already have prefetched
+data when a CPU store completes. A CPU mutex does not pause DMA or provide an
+atomic image update. PicoTTL supplies no frame-publication, cache-maintenance
+or cross-core visibility protocol. Use appropriate SDK queues/mutexes or
+release/acquire synchronization for CPU ownership and data handoff; plain
+flags and `volatile` are insufficient. External memory or cached aliases need
+an application-specific visibility/ordering assessment. No extra barrier is
+introduced into drawing paths, and host tests do not establish RP2350 ordering.
+
+SDK hardware-claim locks protect individual claim/program-allocation calls,
+not PicoTTL's check-then-claim configuration transaction. Concurrent callers
+can both observe a resource as free before one claims it; the other's SDK
+claim may panic. Serialize resource management, keep hardware assignments
+exclusive and preserve the shared PIO GPIO base. State checks and SDK locks
+are not substitutes for this contract. Do not reenter these operations from
+an ISR; a blocking lock can deadlock against interrupted foreground work.
+
+Before retiring a framebuffer: pause CPU drawing/readers and acknowledge their
+quiescence through a synchronized channel; call `end()` and accept detachment
+through `Display::setFramebuffer(nullptr)`; retire independently bound contexts
+and any other consumers; then destroy the old descriptor/storage. The existing
+stop sequence retires DMA before return. `end()` alone preserves bindings and
+resource claims, so it is not permission to free still-referenced objects.
+Do not allow another core to restart output during retirement.
+
+A recommended multicore pattern keeps all PicoTTL calls on core 0. Core 1
+computes independent data and transfers work through an application-owned SDK
+queue; core 0 consumes it and draws while PIO/DMA continue asynchronously.
+Define payload ownership until the receiver acknowledges completion. Another
+single rendering core is possible after publication of stable bindings, but
+lifecycle changes require it to pause/acknowledge first. Simultaneous writers
+need external serialization; this documentation does not make a race safe.
+
+### Flash access and BOOTSEL
+
+PicoTTL contains no flash erase/program path. The diagnostic BOOTSEL helper
+executes from RAM, masks interrupts on the **calling core**, temporarily floats
+flash chip select, reads the pin and restores it. It is not a flash write.
+It does not park the other core, stop flash-reading DMA/XIP streaming, or make
+other flash code/data unavailable to those users. Call it only when every
+other flash accessor is excluded for the entire interval. The stock diagnostics
+are single-core with SRAM scanout; adding a worker running flash code changes
+that assumption even if the worker never calls PicoTTL. Flash-resident fonts,
+bitmaps and rendering code also need flash access.
+
+An application adding flash writes must establish the SDK's appropriate flash
+safe-execution/other-core lockout protocol, including required per-core setup,
+and account separately for DMA/other bus masters reading flash. SRAM-only
+PIO/DMA scanout has no CPU service requirement, but continuing it safely still
+requires resident buffers/control words and hardware validation under load.
+PicoTTL adds no automatic flash lockout; local interrupt masking alone is not
+a multicore exclusion mechanism.
+
 ## 6. Error handling policy (project-wide)
 
 - **Never throw exceptions.** The framework is compatible with

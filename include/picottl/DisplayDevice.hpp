@@ -29,6 +29,10 @@ class Framebuffer;
 /// Owns all standard-specific knowledge: signal generation, mode
 /// geometry and, in future steps, pixel encoding. Hardware details
 /// never cross this boundary upward.
+///
+/// Lifecycle calls and destruction require single-owner access or external
+/// serialization, including other users of the selected hardware resources.
+/// State getters are ordinary reads, not cross-core synchronization signals.
 class DisplayDevice {
 public:
     virtual ~DisplayDevice() = default;
