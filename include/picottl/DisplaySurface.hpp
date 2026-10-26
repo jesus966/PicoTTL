@@ -25,6 +25,10 @@ namespace picottl {
 /// All operations clip: out-of-range writes are ignored and out-of-range
 /// reads return colors::kBlack.
 ///
+/// This interface supplies no synchronization. Serialize CPU accesses that
+/// can touch the same storage, and coordinate rebinding/destruction with all
+/// users. Read-only calls require stable object lifetime and accessed data.
+///
 /// Performance note: per-pixel virtual dispatch is accepted deliberately;
 /// rendering happens at drawing time, never on the video signal path.
 class DisplaySurface {
