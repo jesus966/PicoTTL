@@ -25,6 +25,11 @@ struct Fixture {
     }
 };
 
+std::uint32_t divider256(unsigned sm) {
+    const auto raw = sdk::recording.clkdivRegisters[0][sm];
+    return raw == 0 ? 65'536u * 256u : raw >> 8;
+}
+
 void checkRejectedStart(HardwareScanlineEngine& engine) {
     const auto calls = sdk::recording.calls;
     CHECK(!engine.start());
@@ -395,12 +400,12 @@ PICOTTL_TEST(engineAcceptsClockDividerEndpointsWithoutUnsafeConversion) {
 }
 
 PICOTTL_TEST(enginePreservesFractionalDividersAndIntegerSnapPolicy) {
-    struct Case { std::uint32_t system, pixel; float expected; };
+    struct Case { std::uint32_t system, pixel; std::uint32_t expected256; };
     const Case cases[] = {
-        {1500, 1000, 1.5f}, {2001, 1000, 2},
-        {538, 256, 2.1015625f}, {1077, 512, 2.103515625f},
-        {101, 100, 1}, {102, 100, 1.02f},
-        {16'777'215, 256, 65536} // largest float below 65536, then integer snap
+        {1500, 1000, 384}, {2001, 1000, 512},
+        {538, 256, 538}, {1077, 512, 539},
+        {101, 100, 256}, {102, 100, 261},
+        {16'777'215, 256, 16'777'216} // largest float below 65536, then integer snap
     };
     for (const auto& item : cases) {
         sdk::reset(); Fixture f;
@@ -408,7 +413,7 @@ PICOTTL_TEST(enginePreservesFractionalDividersAndIntegerSnapPolicy) {
         HardwareScanlineEngine engine(f.config());
         auto requested = timing; requested.pixelClockHz = item.pixel;
         CHECK(engine.configure(requested));
-        CHECK(sdk::recording.dividers[0][0] == item.expected);
+        CHECK_EQ(divider256(0), item.expected256);
         CHECK_EQ(sdk::recording.invalidDividerCalls, 0u);
         CHECK_EQ(sdk::recording.floatEndpointCalls, 0u);
     }
@@ -492,20 +497,20 @@ PICOTTL_TEST(engineRejectsEmptyFramesAndRecoversWithoutRejectingZeroReportedRate
 }
 
 PICOTTL_TEST(engineStandardModeClockDividersRemainUnchanged) {
-    struct Case { const VideoTiming* mode; std::uint32_t system; unsigned depth; float expected; };
+    struct Case { const VideoTiming* mode; std::uint32_t system; unsigned depth; std::uint32_t expected256; };
     const Case cases[] = {
-        {&picottl::modes::kIbmMda, 130'000'000, 2, 8},
-        {&picottl::modes::kMdaOverscan, 130'000'000, 2, 8},
-        {&picottl::modes::kIbmCga640, 142'800'000, 4, 10},
-        {&picottl::modes::kIbmCga320, 142'800'000, 4, 20},
-        {&picottl::modes::kIbmEga350, 130'000'000, 8, 8},
-        // The default Pico 2 system clock also preserves the existing
-        // fractional dividers, except CGA320 which snaps to 21.
-        {&picottl::modes::kIbmMda, 150'000'000, 2, 150'000'000.0f / 16'257'000.0f},
-        {&picottl::modes::kMdaOverscan, 150'000'000, 2, 150'000'000.0f / 16'257'000.0f},
-        {&picottl::modes::kIbmCga640, 150'000'000, 4, 150'000'000.0f / 14'318'180.0f},
-        {&picottl::modes::kIbmCga320, 150'000'000, 4, 21},
-        {&picottl::modes::kIbmEga350, 150'000'000, 8, 150'000'000.0f / 16'257'000.0f}
+        {&picottl::modes::kIbmMda, 130'000'000, 2, 2048},
+        {&picottl::modes::kMdaOverscan, 130'000'000, 2, 2048},
+        {&picottl::modes::kIbmCga640, 142'800'000, 4, 2560},
+        {&picottl::modes::kIbmCga320, 142'800'000, 4, 5120},
+        {&picottl::modes::kIbmEga350, 130'000'000, 8, 2048},
+        // Exact SDK-default encoded dividers, including the existing
+        // fractional values at 150 MHz and CGA320's integer snap to 21.
+        {&picottl::modes::kIbmMda, 150'000'000, 2, 2362},
+        {&picottl::modes::kMdaOverscan, 150'000'000, 2, 2362},
+        {&picottl::modes::kIbmCga640, 150'000'000, 4, 2682},
+        {&picottl::modes::kIbmCga320, 150'000'000, 4, 5376},
+        {&picottl::modes::kIbmEga350, 150'000'000, 8, 2362}
     };
     alignas(std::uint32_t) static std::uint8_t pixels[224'000];
     std::uint32_t table[2048];
@@ -518,8 +523,8 @@ PICOTTL_TEST(engineStandardModeClockDividersRemainUnchanged) {
         const auto bytes = static_cast<std::size_t>(item.mode->hActive) * item.mode->vActive * item.depth / 8;
         CHECK(engine.setPixelSource(pixels, bytes, item.depth, item.depth == 8 ? 6 : item.depth));
         CHECK(engine.configure(*item.mode)); CHECK(engine.start());
-        CHECK(sdk::recording.dividers[0][0] == item.expected);
-        CHECK(sdk::recording.dividers[0][1] == item.expected / 2);
+        CHECK_EQ(divider256(0), item.expected256);
+        CHECK_EQ(divider256(1), item.expected256 / 2u);
         CHECK_EQ(sdk::recording.invalidDividerCalls, 0u);
         CHECK_EQ(sdk::recording.floatEndpointCalls, 0u);
     }
@@ -699,4 +704,129 @@ PICOTTL_TEST(engineAPackageRejectsUnavailablePinsBeforeGpioSetup) {
         }
         checkReleased();
     }
+}
+
+PICOTTL_TEST(engineCgaClockPairUsesOneSdkQuantization) {
+    struct Case { std::uint32_t system, timing256, pixel256; bool nearest; };
+    const Case cases[] = {
+        {150'000'000, 2682, 1341, true}, // default SDK: original example is already coherent
+        {150'000'000, 2680, 1340, false}, // original audit's truncating configuration
+        {125'000'000, 2234, 1117, true},
+        {125'000'000, 2234, 1117, false},
+        {133'000'000, 2378, 1189, true},
+        {133'000'000, 2376, 1188, false}
+    };
+    alignas(4) static std::uint8_t pixels[64'000];
+    std::uint32_t table[2048];
+    for (const auto& c : cases) {
+        sdk::reset(); Fixture f; auto config = f.config();
+        config.timingBuffer = table; config.timingBufferWords = 2048;
+        sdk::recording.clockHz = c.system;
+        sdk::recording.roundDividerNearest = c.nearest;
+        HardwareScanlineEngine engine(config);
+        CHECK(engine.setPixelSource(pixels, 64'000, 4));
+        CHECK(engine.configure(picottl::modes::kIbmCga640));
+        CHECK_EQ(divider256(0), c.timing256); CHECK_EQ(divider256(1), c.pixel256);
+        CHECK_EQ(divider256(0), 2u * divider256(1));
+        CHECK_EQ(sdk::recording.floatEndpointCalls, 0u);
+        CHECK(engine.start());
+    }
+}
+
+PICOTTL_TEST(engineModeClockPairsStayCoherentAcrossClocksAndDepths) {
+    struct Mode { const VideoTiming* timing; unsigned maxDepth; };
+    const Mode modes[] = {{&picottl::modes::kIbmMda, 2}, {&picottl::modes::kMdaOverscan, 2},
+        {&picottl::modes::kIbmCga640, 4}, {&picottl::modes::kIbmCga320, 4},
+        {&picottl::modes::kIbmEga350, 8}};
+    // 200/250 MHz are PLL-achievable overclock scenarios, not rated operation.
+    const std::uint32_t clocks[] = {125'000'000, 130'000'000, 133'000'000,
+        150'000'000, 200'000'000, 250'000'000};
+    alignas(4) static std::uint8_t pixels[224'000];
+    std::uint32_t table[2048];
+    for (bool nearest : {false, true}) for (auto system : clocks) for (const auto& mode : modes) {
+        for (unsigned depth = 1; depth <= mode.maxDepth; depth *= 2) {
+            sdk::reset(); Fixture f; auto config = f.config();
+            config.timingBuffer = table; config.timingBufferWords = 2048;
+            sdk::recording.clockHz = system; sdk::recording.roundDividerNearest = nearest;
+            HardwareScanlineEngine engine(config);
+            const auto bytes = static_cast<std::size_t>(mode.timing->hActive) * mode.timing->vActive * depth / 8u;
+            CHECK(engine.setPixelSource(pixels, bytes, static_cast<std::uint8_t>(depth), depth == 8 ? 6 : depth));
+            CHECK(engine.configure(*mode.timing));
+            const auto t = divider256(0), p = divider256(1);
+            CHECK_EQ(t, 2u * p); CHECK(p >= 256); CHECK(t <= 65'536u * 256u);
+            const auto nominal = static_cast<std::uint64_t>(mode.timing->pixelClockHz) * t;
+            const auto effective = static_cast<std::uint64_t>(system) * 256u;
+            const auto error = nominal > effective ? nominal - effective : effective - nominal;
+            CHECK(error * 100u <= nominal); // Existing 1% snapping envelope, checked exactly.
+            CHECK(engine.start()); engine.stop(); CHECK(engine.start()); engine.stop();
+            CHECK_EQ(sdk::recording.abortWhileEnabled, 0u);
+        }
+    }
+}
+
+PICOTTL_TEST(engineCoherentClockBoundariesRejectBeforeHardwareAndRecover) {
+    struct Case { std::uint32_t system, pixel, t, p; bool valid; };
+    const Case cases[] = {
+        {1000, 1000, 0, 0, false}, {1500, 1000, 0, 0, false},
+        {197, 100, 0, 0, false}, {198, 100, 512, 256, true},
+        {200, 100, 512, 256, true}, {517, 256, 512, 256, true},
+        {518, 256, 518, 259, true}, {539, 256, 540, 270, true},
+        {65'536, 1, 16'777'216, 8'388'608, true},
+        {UINT32_MAX, 65'536, 16'777'216, 8'388'608, true},
+        {65'537, 1, 0, 0, false}, {UINT32_MAX, 1, 0, 0, false},
+        {0, 1000, 0, 0, false}, {1000, 0, 0, 0, false}
+    };
+    for (const auto& c : cases) {
+        sdk::reset(); Fixture f; HardwareScanlineEngine engine(f.config());
+        sdk::recording.clockHz = c.system;
+        CHECK(engine.setPixelSource(f.pixels, 4));
+        auto requested = timing; requested.pixelClockHz = c.pixel;
+        CHECK_EQ(engine.configure(requested), c.valid);
+        if (c.valid) {
+            CHECK_EQ(divider256(0), c.t); CHECK_EQ(divider256(1), c.p);
+            CHECK_EQ(divider256(0), 2u * divider256(1));
+            if (c.t == 16'777'216) CHECK_EQ(sdk::recording.clkdivRegisters[0][0], 0u);
+            CHECK_EQ(sdk::recording.invalidDividerCalls, 0u);
+            CHECK_EQ(sdk::recording.floatEndpointCalls, 0u);
+        } else {
+            checkClockRejectedBeforePio(engine);
+            sdk::recording.clockHz = 130'000'000;
+            CHECK(engine.configure(timing)); CHECK_EQ(divider256(0), 2u * divider256(1));
+            CHECK(engine.start());
+        }
+    }
+}
+
+PICOTTL_TEST(engineSignalOnlyKeepsFullDividerResolution) {
+    sdk::reset(); Fixture f; HardwareScanlineEngine engine(f.config());
+    sdk::recording.clockHz = 539;
+    auto requested = timing; requested.pixelClockHz = 256;
+    CHECK(engine.configure(requested)); CHECK_EQ(divider256(0), 539u);
+    CHECK(!sdk::recording.smClaimed[0][1]);
+    CHECK(engine.setPixelSource(f.pixels, 4)); CHECK(engine.configure(requested));
+    CHECK_EQ(divider256(0), 540u); CHECK_EQ(divider256(1), 270u);
+    CHECK(engine.start()); engine.stop();
+    CHECK(engine.setPixelSource(nullptr, 0)); CHECK(engine.configure(requested));
+    CHECK_EQ(divider256(0), 539u); CHECK(engine.start());
+    CHECK(!sdk::recording.smEnabled[0][1]);
+}
+
+PICOTTL_TEST(engineCoherentClockRecoveryPreservesStopStartChaining) {
+    sdk::reset(); Fixture f; HardwareScanlineEngine engine(f.config());
+    sdk::recording.clockHz = 539;
+    auto requested = timing; requested.pixelClockHz = 256;
+    CHECK(engine.setPixelSource(f.pixels, 4)); CHECK(engine.configure(requested));
+    CHECK_EQ(divider256(0), 540u); CHECK_EQ(divider256(1), 270u);
+    CHECK(engine.start()); engine.stop(); CHECK(engine.start());
+    const auto dividers = sdk::recording.clkdivRegisters;
+    const auto gpio = sdk::recording.gpioConfigurations;
+    sdk::recording.clockHz = 0;
+    CHECK(!engine.configure(requested)); checkRejectedStart(engine); checkQuiescent(15);
+    CHECK(sdk::recording.clkdivRegisters == dividers);
+    CHECK_EQ(sdk::recording.gpioConfigurations, gpio);
+    sdk::recording.clockHz = 539;
+    CHECK(engine.configure(requested)); CHECK(engine.start());
+    CHECK_EQ(divider256(0), 540u); CHECK_EQ(divider256(1), 270u);
+    CHECK_EQ((dma_hw->ch[0].ctrl_trig & DMA_CH0_CTRL_TRIG_CHAIN_TO_BITS) >> 13, 1u);
+    CHECK_EQ((dma_hw->ch[2].ctrl_trig & DMA_CH0_CTRL_TRIG_CHAIN_TO_BITS) >> 13, 3u);
 }

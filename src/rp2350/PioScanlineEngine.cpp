@@ -33,14 +33,22 @@ bool pioClockDividerValid(float divider) {
     return divider >= 1.0f && divider <= kMaxPioClockDivider;
 }
 
-void setPioClockDivider(pio_sm_config* config, float divider) {
+std::uint32_t pioClockDivider256(float divider) {
     if (divider == kMaxPioClockDivider) {
-        // INT=0, FRAC=0 encodes 65536. Avoid the SDK 2.3.0 float
-        // helper's out-of-range conversion of 65536 to uint16_t.
-        sm_config_set_clkdiv_int_frac8(config, 0, 0);
-    } else {
-        sm_config_set_clkdiv(config, divider);
+        // Avoid the SDK 2.3.0 float helper's out-of-range uint16_t cast.
+        return kMaxPioClockDivider * 256u;
     }
+    std::uint32_t integer;
+    std::uint8_t fraction;
+    pio_calculate_clkdiv8_from_float(divider, &integer, &fraction);
+    return integer * 256u + fraction;
+}
+
+void setPioClockDivider(pio_sm_config* config, std::uint32_t divider256) {
+    const auto integer = divider256 / 256u;
+    // INT=0, FRAC=0 encodes 65536; other divisors use the usual 16:8 form.
+    sm_config_set_clkdiv_int_frac8(config, integer == kMaxPioClockDivider ? 0u : integer,
+                                   static_cast<std::uint8_t>(divider256 & 0xffu));
 }
 
 /// Maximum segment length in pixels (29-bit delay field).
@@ -553,7 +561,15 @@ bool PioScanlineEngine::prepareClockConfig(const VideoTiming& timing) {
         (pixelSource_ != nullptr && !pioClockDividerValid(divider / 2.0f))) {
         return false;
     }
-    timingClockDivider_ = divider;
+    // Quantize once. Two pixel-SM cycles must take exactly one timing-SM
+    // cycle, so derive the timing divider from the encoded pixel divider.
+    // Signal-only output keeps the SDK's full 1/256 divider resolution.
+    const std::uint32_t factor = pixelSource_ != nullptr ? 2u : 1u;
+    const auto quantized = pioClockDivider256(divider / static_cast<float>(factor));
+    if (quantized < 256u || quantized > kMaxPioClockDivider * 256u / factor) {
+        return false;
+    }
+    timingClockDivider256_ = quantized * factor;
     return true;
 }
 
@@ -586,7 +602,7 @@ void PioScanlineEngine::applyPioConfig() {
                            pixelSource_ != nullptr ? 3 : 2);
     sm_config_set_out_shift(&c, /*shift_right=*/true, /*autopull=*/true, 32);
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
-    setPioClockDivider(&c, timingClockDivider_);
+    setPioClockDivider(&c, timingClockDivider256_);
 
     pio_sm_init(pio, config_.stateMachine,
                 static_cast<uint>(programOffset_), &c);
@@ -598,7 +614,7 @@ void PioScanlineEngine::applyPixelPioConfig() {
 
     // The pixel program takes 2 cycles per pixel (out + jmp), so its
     // state machine runs at twice the pixel clock.
-    const float divider = timingClockDivider_ / 2.0f;
+    const auto divider = timingClockDivider256_ / 2u;
 
     pio_sm_config c =
         pixelBitsPerPixel_ == 8
