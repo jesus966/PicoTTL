@@ -68,6 +68,10 @@ public:
                                             ///< pixel source, hsyncPin + 2 is also claimed
                                             ///< as internal display-enable (leave unwired).
         std::uint8_t videoPin = 0;          ///< Video GPIO (pixel path only).
+        // Borrowed, word-aligned writable array. Its declared word capacity
+        // is checked before table writes; the allocation size cannot be
+        // discovered from the pointer. Do not modify it during scanout.
+        // stop() quiesces DMA but start() may reuse the retained table.
         std::uint32_t* timingBuffer = nullptr; ///< Caller-provided timing table storage.
         std::size_t timingBufferWords = 0;     ///< Capacity of timingBuffer in 32-bit words.
     };
@@ -124,8 +128,13 @@ public:
     /// architectural invariant); only the PIO program differs.
     /// The data must be 4-byte aligned and its size a multiple of 4.
     /// Must be called before configure(); pass nullptr to detach. The
-    /// caller owns the memory, which must stay valid while the engine
-    /// runs.
+    /// caller owns the memory and declares its accessible byte count; the
+    /// engine cannot verify the underlying allocation. A rejected source
+    /// leaves the previous binding/configuration unchanged. stop() quiesces
+    /// DMA but retains the source for restart; detach or replace it before
+    /// retiring storage. Timing tables and the engine's one-word DMA rewind
+    /// sources must remain alive during use. Lifecycle updates are serialized
+    /// and performed while DMA is quiescent; live pixel writes may tear.
     bool setPixelSource(const std::uint8_t* data, std::size_t sizeBytes,
                         std::uint8_t bitsPerPixel = 1,
                         std::uint8_t pinCount = 0);

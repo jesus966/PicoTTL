@@ -40,7 +40,10 @@ public:
     /// Raw pixel storage (for backends, tests and inspection).
     virtual const std::uint8_t* data() const = 0;
 
-    /// Total bytes of pixel storage.
+    /// Total bytes of pixel storage, not necessarily the allocation capacity.
+    /// Implementations must report an accessible contiguous data() range of
+    /// this size with a layout matching pixelFormat(). Backends can validate
+    /// this declaration against geometry, not discover the allocation size.
     virtual std::size_t sizeBytes() const = 0;
 
 protected:
