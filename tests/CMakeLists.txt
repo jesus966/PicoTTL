@@ -37,6 +37,12 @@ set(PICOTTL_HOST_ENGINE_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/HardwareScanlineEngi
 configure_file(${CMAKE_CURRENT_LIST_DIR}/../src/rp2350/PioScanlineEngine.cpp
     ${PICOTTL_HOST_ENGINE_SOURCE} COPYONLY)
 
+# A separately named build of the same engine exercises the RP2350B
+# 48-GPIO compile-time limit in the same CI/sanitizer executable.
+set(PICOTTL_HOST_B_ENGINE_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/HighGpioScanlineEngine.cpp")
+configure_file(${CMAKE_CURRENT_LIST_DIR}/../src/rp2350/PioScanlineEngine.cpp
+    ${PICOTTL_HOST_B_ENGINE_SOURCE} COPYONLY)
+
 add_executable(picottl_tests
     framework/test.cpp
     test_packed_framebuffer.cpp
@@ -51,6 +57,8 @@ add_executable(picottl_tests
     test_framebuffer_lifecycle.cpp
     test_dma_stop.cpp
     test_video_timing.cpp
+    test_engine_gpio.cpp
+    ${PICOTTL_HOST_B_ENGINE_SOURCE}
     test_engine_configuration.cpp
     ${PICOTTL_HOST_ENGINE_SOURCE}
     # Real backend lifecycle code, linked to a recording engine instead
@@ -80,6 +88,12 @@ add_executable(picottl_tests
 set_source_files_properties(${PICOTTL_HOST_ENGINE_SOURCE} PROPERTIES
     COMPILE_DEFINITIONS "PioScanlineEngine=HardwareScanlineEngine"
     INCLUDE_DIRECTORIES "${CMAKE_CURRENT_LIST_DIR}/support/pico_sdk;${CMAKE_CURRENT_LIST_DIR}/../src/rp2350")
+
+set_source_files_properties(${PICOTTL_HOST_B_ENGINE_SOURCE} PROPERTIES
+    COMPILE_DEFINITIONS "PioScanlineEngine=HighGpioScanlineEngine;PICOTTL_TEST_GPIO_COUNT=48"
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_LIST_DIR}/support/pico_sdk;${CMAKE_CURRENT_LIST_DIR}/../src/rp2350")
+set_source_files_properties(test_engine_gpio.cpp PROPERTIES
+    COMPILE_DEFINITIONS "PICOTTL_TEST_GPIO_COUNT=48")
 
 target_include_directories(picottl_tests PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}

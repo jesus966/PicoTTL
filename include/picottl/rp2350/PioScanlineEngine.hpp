@@ -45,6 +45,12 @@ class PioScanlineEngine final {
 public:
     /// Hardware resources used by the engine. The engine never selects
     /// resources on its own: everything is chosen by the caller.
+    /// GPIO numbers are absolute. All used pins must exist on the target
+    /// package and fit the selected PIO's current 32-pin GPIO window:
+    /// 0..31 at base 0, or 16..47 at base 16 on RP2350B with SDK GPIO-base
+    /// support enabled. The engine never changes this shared base. Select
+    /// it before loading any programs, and keep it stable for all PIO users
+    /// until their resources are released (stop/end do not release them).
     /// Pixel-path resources are ignored (and not claimed) unless a pixel
     /// source is attached with setPixelSource().
     struct Config {

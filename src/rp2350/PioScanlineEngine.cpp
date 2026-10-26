@@ -418,7 +418,8 @@ bool PioScanlineEngine::hardwareConfigValid() const {
     }
 
     if (pixelSource_ == nullptr) {
-        return true;
+        const uint base = pio_get_gpio_base(pio_get_instance(config_.pioInstance));
+        return config_.hsyncPin >= base && config_.hsyncPin + 2u <= base + 32u;
     }
     const std::uint32_t displayEnablePin = config_.hsyncPin + 2u;
 
@@ -444,7 +445,11 @@ bool PioScanlineEngine::hardwareConfigValid() const {
         return false;
     }
 
-    return true;
+    // GPIOBASE belongs to the entire PIO instance. Respect the application's
+    // existing window; never relocate foreign state machines/programs.
+    const uint base = pio_get_gpio_base(pio_get_instance(config_.pioInstance));
+    return config_.hsyncPin >= base && displayEnablePin < base + 32u &&
+           config_.videoPin >= base && videoLastPin < base + 32u;
 }
 
 bool PioScanlineEngine::acquireHardware() {
@@ -692,15 +697,16 @@ void PioScanlineEngine::driveSignalsIdle() {
         activeLevel(timing_.hSyncPolarity) ? 0u : 1u;
     const std::uint32_t vsIdle =
         activeLevel(timing_.vSyncPolarity) ? 0u : 1u;
-    const std::uint32_t values =
-        (hsIdle << config_.hsyncPin) | (vsIdle << (config_.hsyncPin + 1u));
-    std::uint32_t mask = 3u << config_.hsyncPin;
+    const std::uint64_t values =
+        (static_cast<std::uint64_t>(hsIdle) << config_.hsyncPin) |
+        (static_cast<std::uint64_t>(vsIdle) << (config_.hsyncPin + 1u));
+    std::uint64_t mask = UINT64_C(3) << config_.hsyncPin;
     if (pixelHardwareAcquired_) {
-        mask |= 1u << (config_.hsyncPin + 2u); // display-enable low
+        mask |= UINT64_C(1) << (config_.hsyncPin + 2u); // display-enable low
         // All pixel output pins low.
-        mask |= ((1u << pixelPinCount_) - 1u) << config_.videoPin;
+        mask |= ((UINT64_C(1) << pixelPinCount_) - 1u) << config_.videoPin;
     }
-    pio_sm_set_pins_with_mask(pio, config_.stateMachine, values, mask);
+    pio_sm_set_pins_with_mask64(pio, config_.stateMachine, values, mask);
 }
 
 } // namespace picottl::rp2350

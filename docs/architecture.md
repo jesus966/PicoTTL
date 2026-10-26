@@ -341,6 +341,36 @@ fails gracefully (returns `false`) if any is unavailable, and releases
 them in the backend destructor. Global machine state (system clock,
 voltage) is never touched: clock policy belongs to the application.
 
+GPIO numbers are absolute, not relative to a PIO window. RP2350A has GPIO
+0..29; RP2350B has GPIO 0..47. The target board may expose fewer pins or
+reserve some for onboard hardware. Pico 2 uses RP2350A, so it cannot expose
+GPIO 32..47. Its onboard connections also make package availability alone
+insufficient when selecting application pins.
+
+Each PIO block shares one 32-pin GPIO window across all its state machines:
+base 0 addresses GPIO 0..31, and base 16 addresses GPIO 16..47. All sync,
+internal display-enable and active pixel pins must fit the **current** window
+and the target package. Consecutive groups crossing GPIO 31/32 work at base
+16, but combinations needing both GPIO 0..15 and GPIO 32..47 cannot use one
+PIO block. Existing ascending/consecutive pin-group requirements still apply.
+
+The backend never changes GPIOBASE, including during retry, stop or destruction.
+For high GPIOs, build for an RP2350B board with SDK `PICO_PIO_USE_GPIO_BASE=1`
+(the default for that package). Before loading programs or starting any PIO
+users, the application must select base 16 using SDK
+`pio_set_gpio_base(pio_get_instance(config.pioInstance), 16)` and check its
+return code. Keep that base stable until **all** users have released their
+resources; `end()` alone is insufficient. A window mismatch is rejected
+before acquisition or GPIO setup. Compatible foreign state machines can share
+the block without being relocated.
+
+SDK pin-configuration functions receive absolute pin numbers and perform the
+base translation. Idle levels use the SDK's absolute 64-bit mask operation,
+which translates to the selected PIO window without out-of-range 32-bit shifts.
+The host recorder checks mapping and lifecycle logic; RP2350B electrical output,
+board routing and CRT compatibility still require physical validation.
+
+
 ## 9. Platform independence
 
 Only `src/rp2350/` and `include/picottl/rp2350/` may include Pico SDK

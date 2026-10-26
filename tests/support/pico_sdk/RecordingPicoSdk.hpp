@@ -9,7 +9,11 @@
 // No PIO instructions, DMA transfers, DREQ timing or bus races are executed.
 using uint = unsigned;
 constexpr int NUM_PIOS = 3, NUM_PIO_STATE_MACHINES = 4;
-constexpr int NUM_DMA_CHANNELS = 16, NUM_BANK0_GPIOS = 30;
+constexpr int NUM_DMA_CHANNELS = 16;
+#ifndef PICOTTL_TEST_GPIO_COUNT
+#define PICOTTL_TEST_GPIO_COUNT 30
+#endif
+constexpr int NUM_BANK0_GPIOS = PICOTTL_TEST_GPIO_COUNT;
 constexpr std::uint32_t DMA_CH0_CTRL_TRIG_EN_BITS = 1;
 constexpr std::uint32_t DMA_CH0_CTRL_TRIG_BUSY_BITS = 0x04000000;
 constexpr std::uint32_t DMA_CH0_CTRL_TRIG_CHAIN_TO_BITS = 0x0001e000;
@@ -19,7 +23,12 @@ constexpr uint GPIO_SLEW_RATE_FAST = 1, DMA_SIZE_32 = 2, PIO_FIFO_JOIN_TX = 1;
 constexpr uint pio_y = 1, pio_osr = 2, pio_null = 3;
 
 struct pio_program_t { uint id; };
-struct pio_sm_config { float divider = 1; bool fullPeriodEncoded = false; };
+struct pio_sm_config {
+    float divider = 1;
+    bool fullPeriodEncoded = false;
+    int outPin = -1, inPin = -1;
+    uint outCount = 0;
+};
 struct dma_channel_config { std::uint32_t ctrl = 1; };
 struct PioRegisters { std::uint32_t txf[4]{}; unsigned sdkCalls = 0; };
 using PIO = PioRegisters*;
@@ -47,6 +56,11 @@ struct Recording {
     std::array<std::array<unsigned, 4>, 3> pioConfigurations{};
     std::array<std::array<float, 4>, 3> dividers{};
     std::array<std::array<bool, 4>, 3> fullPeriodEncoded{};
+    std::array<uint, 3> gpioBase{};
+    std::array<int, 48> gpioFunction{};
+    std::array<std::array<int, 4>, 3> outRelative{}, inRelative{};
+    std::array<std::uint32_t, 3> outputMask{}, outputValues{}, directionMask{};
+    unsigned invalidPinCalls = 0;
     std::uint32_t lastAbort = 0;
 };
 inline Recording recording;
@@ -99,6 +113,7 @@ inline void reset() {
 
 inline std::uint32_t clock_get_hz(uint) { auto& r = picottl_test::sdk::recording; ++r.calls; ++r.clockReads; return r.clockHz; }
 inline PIO pio_get_instance(uint n) { assert(n < NUM_PIOS); ++picottl_test::sdk::recording.calls; return &picottl_test::sdk::pios[n]; }
+inline uint pio_get_gpio_base(const PioRegisters* p) { return picottl_test::sdk::recording.gpioBase[picottl_test::sdk::index(p)]; }
 inline bool pio_sm_is_claimed(PIO p, uint sm) { ++p->sdkCalls; return picottl_test::sdk::recording.smClaimed[picottl_test::sdk::index(p)][sm]; }
 inline void pio_sm_claim(PIO p, uint sm) { ++p->sdkCalls; auto& r = picottl_test::sdk::recording; assert(!pio_sm_is_claimed(p, sm)); r.smClaimed[picottl_test::sdk::index(p)][sm] = true; ++r.calls; }
 inline void pio_sm_unclaim(PIO p, uint sm) { ++p->sdkCalls; auto& r = picottl_test::sdk::recording; assert(pio_sm_is_claimed(p, sm)); r.smClaimed[picottl_test::sdk::index(p)][sm] = false; ++r.calls; ++r.releases; }
@@ -111,6 +126,15 @@ inline void pio_sm_init(PIO p, uint sm, uint pc, const pio_sm_config* c) {
     ++p->sdkCalls;
     auto& r = picottl_test::sdk::recording;
     const auto instance = picottl_test::sdk::index(p);
+    const uint base = pio_get_gpio_base(p);
+    if ((c->outPin >= 0 && (static_cast<uint>(c->outPin) < base ||
+            static_cast<uint>(c->outPin) + c->outCount > base + 32)) ||
+        (c->inPin >= 0 && (static_cast<uint>(c->inPin) < base ||
+            static_cast<uint>(c->inPin) >= base + 32))) {
+        ++r.invalidPinCalls;
+    }
+    r.outRelative[instance][sm] = c->outPin < 0 ? -1 : c->outPin - static_cast<int>(base);
+    r.inRelative[instance][sm] = c->inPin < 0 ? -1 : c->inPin - static_cast<int>(base);
     if (pc >= 32) ++r.invalidPc;
     ++r.pioConfigurations[instance][sm];
     r.dividers[instance][sm] = c->divider;
@@ -122,17 +146,42 @@ inline void pio_sm_clear_fifos(PIO, uint) { ++picottl_test::sdk::recording.calls
 inline void pio_sm_restart(PIO, uint) { ++picottl_test::sdk::recording.calls; }
 inline void pio_sm_exec(PIO, uint, uint) { ++picottl_test::sdk::recording.calls; }
 inline void pio_sm_put(PIO, uint, std::uint32_t) { ++picottl_test::sdk::recording.calls; }
-inline void pio_sm_set_pins_with_mask(PIO, uint, std::uint32_t, std::uint32_t) { ++picottl_test::sdk::recording.calls; ++picottl_test::sdk::recording.pinWrites; }
-inline void pio_sm_set_consecutive_pindirs(PIO, uint, uint, uint, bool) { ++picottl_test::sdk::recording.calls; ++picottl_test::sdk::recording.pinDirections; }
-inline void pio_gpio_init(PIO, uint) { ++picottl_test::sdk::recording.calls; ++picottl_test::sdk::recording.gpioConfigurations; }
+inline void pio_sm_set_pins_with_mask64(PIO p, uint, std::uint64_t values, std::uint64_t mask) {
+    auto& r = picottl_test::sdk::recording;
+    const uint instance = picottl_test::sdk::index(p), base = pio_get_gpio_base(p);
+    if ((mask & ~(UINT64_C(0xffffffff) << base)) != 0) ++r.invalidPinCalls;
+    const auto relativeMask = static_cast<std::uint32_t>(mask >> base);
+    r.outputMask[instance] = relativeMask;
+    r.outputValues[instance] = (r.outputValues[instance] & ~relativeMask) |
+        (static_cast<std::uint32_t>(values >> base) & relativeMask);
+    ++r.calls; ++r.pinWrites;
+}
+inline void pio_sm_set_pins_with_mask(PIO p, uint sm, std::uint32_t values, std::uint32_t mask) {
+    pio_sm_set_pins_with_mask64(p, sm, values, mask);
+}
+inline void pio_sm_set_consecutive_pindirs(PIO p, uint, uint pin, uint count, bool output) {
+    auto& r = picottl_test::sdk::recording;
+    const uint instance = picottl_test::sdk::index(p), base = pio_get_gpio_base(p);
+    if (pin < base || pin + count > base + 32) { ++r.invalidPinCalls; return; }
+    const auto mask = ((1u << count) - 1u) << (pin - base);
+    if (output) r.directionMask[instance] |= mask;
+    else r.directionMask[instance] &= ~mask;
+    ++r.calls; ++r.pinDirections;
+}
+inline void pio_gpio_init(PIO p, uint pin) {
+    auto& r = picottl_test::sdk::recording;
+    assert(pin < r.gpioFunction.size());
+    r.gpioFunction[pin] = static_cast<int>(picottl_test::sdk::index(p)) + 1;
+    ++r.calls; ++r.gpioConfigurations;
+}
 inline void gpio_set_drive_strength(uint, uint) { ++picottl_test::sdk::recording.calls; ++picottl_test::sdk::recording.padConfigurations; }
 inline void gpio_set_slew_rate(uint, uint) { ++picottl_test::sdk::recording.calls; ++picottl_test::sdk::recording.padConfigurations; }
 inline uint pio_encode_jmp(uint pc) { if (pc >= 32) ++picottl_test::sdk::recording.invalidPc; return 0; }
 inline uint pio_encode_pull(bool, bool) { return 0; }
 inline uint pio_encode_mov(uint, uint) { return 0; }
 inline uint pio_encode_out(uint, uint) { return 0; }
-inline void sm_config_set_out_pins(pio_sm_config*, uint, uint) {}
-inline void sm_config_set_in_pins(pio_sm_config*, uint) {}
+inline void sm_config_set_out_pins(pio_sm_config* c, uint pin, uint count) { c->outPin = static_cast<int>(pin); c->outCount = count; }
+inline void sm_config_set_in_pins(pio_sm_config* c, uint pin) { c->inPin = static_cast<int>(pin); }
 inline void sm_config_set_out_shift(pio_sm_config*, bool, bool, uint) {}
 inline void sm_config_set_fifo_join(pio_sm_config*, uint) {}
 inline void sm_config_set_clkdiv(pio_sm_config* c, float divider) {

@@ -48,6 +48,11 @@ public:
     /// Hardware resources used by this backend. The application decides;
     /// the framework validates and configures exactly these resources
     /// and claims nothing else.
+    /// GPIO indices are absolute and limited by the target package and the
+    /// selected PIO's current GPIO window (0..31, or 16..47 on RP2350B).
+    /// The application selects the shared PIO GPIO base before any programs
+    /// are loaded; this backend never changes it. Keep the base stable while
+    /// any user retains PIO resources, including after end().
     struct Config {
         /// Maximum pixel-value bits of any format (capacity of pixelPins).
         static constexpr std::size_t kMaxPixelBits = 8;
