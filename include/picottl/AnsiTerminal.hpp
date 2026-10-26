@@ -48,6 +48,12 @@ struct AnsiPalette {
 /// and extended-color parameters). Unknown sequences are consumed and
 /// ignored; adding new ones only requires new handlers.
 ///
+/// In PicoTTL, ESC 7/8 and CSI s/u share one save slot for cursor position,
+/// effective Terminal attributes and logical SGR state (color selections,
+/// default-color flags, bold, underline, blink and reverse). A new save
+/// replaces that slot. Parser state and cursor visibility are not part of it.
+/// Attribute resets and RIS reset active state but retain the slot.
+///
 /// Usage:
 ///   picottl::AnsiTerminal ansi(terminal, palette);
 ///   ansi.processByte(receivedByte); // e.g. from USB CDC
@@ -69,14 +75,25 @@ public:
     /// Installs the BEL callback (nullptr = BEL is ignored).
     void setBellHandler(BellHandler handler, void* user);
 
-    /// Resets parser state, attributes and cursor visibility (also
-    /// performed by ESC c together with a screen clear).
+    /// Resets parser state and active attributes, retaining the saved slot.
+    /// ESC c also clears the screen and shows the cursor.
     void resetAttributes();
 
 private:
     static constexpr std::size_t kMaxParameters = 8;
 
     enum class State : std::uint8_t { Ground, Escape, Csi };
+
+    struct SgrState {
+        std::uint8_t foregroundIndex = 0;
+        std::uint8_t backgroundIndex = 0;
+        bool foregroundDefault = true;
+        bool backgroundDefault = true;
+        bool bold = false;
+        bool underline = false;
+        bool blink = false;
+        bool reverse = false;
+    };
 
     void handleControl(std::uint8_t byte);
     void handleEscape(std::uint8_t byte);
@@ -104,18 +121,12 @@ private:
     bool privateMarker_ = false;
 
     // Logical SGR state (backend-independent).
-    std::uint8_t foregroundIndex_ = 0;
-    std::uint8_t backgroundIndex_ = 0;
-    bool foregroundDefault_ = true;
-    bool backgroundDefault_ = true;
-    bool bold_ = false;
-    bool underline_ = false;
-    bool blink_ = false;
-    bool reverse_ = false;
+    SgrState sgr_{};
 
     std::int32_t savedColumn_ = 0;
     std::int32_t savedRow_ = 0;
     CellAttributes savedAttributes_{};
+    SgrState savedSgr_{};
 
     BellHandler bellHandler_ = nullptr;
     void* bellUser_ = nullptr;

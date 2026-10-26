@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
 
 #include "framework/test.hpp"
 #include "picottl/AnsiTerminal.hpp"
@@ -42,6 +43,20 @@ AnsiPalette testPalette() {
     return palette;
 }
 
+AnsiPalette identityPalette() {
+    AnsiPalette palette;
+    for (std::uint8_t i = 0; i < 16; ++i) {
+        palette.foreground[i] = Color{i};
+        palette.background[i] = Color{i};
+    }
+    palette.defaultForeground = Color{7};
+    palette.defaultBackground = Color{0};
+    return palette;
+}
+
+struct SaveRestore { const char* save; const char* restore; };
+constexpr SaveRestore saveRestore[] = {{"\x1B" "7", "\x1B" "8"}, {"\x1B[s", "\x1B[u"}};
+
 struct Fixture {
     std::uint8_t storage[picottl::PackedFramebuffer2::bytesFor(kW, kH)] = {};
     picottl::PackedFramebuffer2 fb{storage, sizeof storage, kW, kH};
@@ -49,7 +64,9 @@ struct Fixture {
     picottl::Text text{gfx, picottl::fonts::kIbmMda9x14};
     picottl::TerminalCell cells[picottl::Terminal::cellsFor(80, 25)];
     picottl::Terminal terminal{text, cells, sizeof cells / sizeof cells[0]};
-    AnsiTerminal ansi{terminal, testPalette()};
+    AnsiTerminal ansi;
+
+    explicit Fixture(const AnsiPalette& palette = testPalette()) : ansi(terminal, palette) {}
 
     void feed(const char* sequence) {
         ansi.processBytes(reinterpret_cast<const std::uint8_t*>(sequence),
@@ -189,5 +206,156 @@ PICOTTL_TEST(ansiHostileParameterInputIsHarmless) {
     g.feed("\x1B[99999999999999999999m");
     g.feed("y"); // Saturated value is unknown-SGR: ignored, no crash.
     CHECK_EQ(g.cells[0].character, 'y');
+}
+
+PICOTTL_TEST(ansiRestoreKeepsLogicalForeground) {
+    for (const auto& sequence : saveRestore) {
+        Fixture f(identityPalette());
+        f.feed("\x1B[31m"); f.feed(sequence.save);
+        f.feed("\x1B[32m"); f.feed(sequence.restore);
+        CHECK_EQ(f.terminal.attributes().foreground.index, 1);
+        f.feed("\x1B[1mX");
+        CHECK_EQ(f.cells[0].attributes.foreground.index, 9);
+    }
+}
+
+PICOTTL_TEST(ansiRestoreKeepsLogicalBackground) {
+    for (const auto& sequence : saveRestore) {
+        Fixture f(identityPalette());
+        f.feed("\x1B[41m"); f.feed(sequence.save);
+        f.feed("\x1B[42m"); f.feed(sequence.restore);
+        CHECK_EQ(f.terminal.attributes().background.index, 1);
+        f.feed("\x1B[34mX");
+        CHECK_EQ(f.cells[0].attributes.foreground.index, 4);
+        CHECK_EQ(f.cells[0].attributes.background.index, 1);
+    }
+}
+
+PICOTTL_TEST(ansiRestorePreservesDefaultColorSelections) {
+    for (const auto& sequence : saveRestore) {
+        for (bool defaults : {false, true}) {
+            Fixture f(identityPalette());
+            f.feed("\x1B[31;44m");
+            if (defaults) f.feed("\x1B[39;49m");
+            f.feed(sequence.save);
+            f.feed(defaults ? "\x1B[32;43m" : "\x1B[39;49m");
+            f.feed(sequence.restore);
+            f.feed("\x1B[4mX");
+            CHECK_EQ(f.cells[0].attributes.foreground.index, defaults ? 7 : 1);
+            CHECK_EQ(f.cells[0].attributes.background.index, defaults ? 0 : 4);
+            CHECK(f.cells[0].attributes.underline);
+        }
+    }
+}
+
+PICOTTL_TEST(ansiRestorePreservesBoldUnderlineAndBlink) {
+    struct Case { const char* saved; const char* changed; unsigned fg; bool underline, blink; };
+    const Case cases[] = {
+        {"\x1B[31;1m", "\x1B[0;32m", 12, false, false},
+        {"\x1B[31m", "\x1B[1;32m", 4, false, false},
+        {"\x1B[31;4m", "\x1B[0;32m", 4, true, false},
+        {"\x1B[31m", "\x1B[4;32m", 4, false, false},
+        {"\x1B[31;5m", "\x1B[0;32m", 4, false, true},
+        {"\x1B[31m", "\x1B[5;32m", 4, false, false},
+    };
+    for (const auto& sequence : saveRestore) {
+        for (const auto& item : cases) {
+            Fixture f(identityPalette());
+            f.feed(item.saved); f.feed(sequence.save);
+            f.feed(item.changed); f.feed(sequence.restore);
+            f.feed("\x1B[34mX");
+            CHECK_EQ(f.cells[0].attributes.foreground.index, item.fg);
+            CHECK_EQ(f.cells[0].attributes.background.index, 0);
+            CHECK_EQ(f.cells[0].attributes.underline, item.underline);
+            CHECK_EQ(f.cells[0].attributes.blink, item.blink);
+        }
+    }
+}
+
+PICOTTL_TEST(ansiRestorePreservesReverseColorInterpretation) {
+    for (const auto& sequence : saveRestore) {
+        for (bool reverse : {false, true}) {
+            Fixture f(identityPalette());
+            f.feed(reverse ? "\x1B[31;44;7m" : "\x1B[31;44m");
+            f.feed(sequence.save);
+            f.feed(reverse ? "\x1B[0;32;43m" : "\x1B[32;43;7m");
+            f.feed(sequence.restore);
+            CHECK_EQ(f.terminal.attributes().foreground.index, reverse ? 4 : 1);
+            CHECK_EQ(f.terminal.attributes().background.index, reverse ? 1 : 4);
+            f.feed("\x1B[32mX");
+            CHECK_EQ(f.cells[0].attributes.foreground.index, reverse ? 4 : 2);
+            CHECK_EQ(f.cells[0].attributes.background.index, reverse ? 2 : 4);
+        }
+    }
+}
+
+PICOTTL_TEST(ansiSaveRestoreUsesOneSharedCursorAndAttributeSlot) {
+    Fixture f(identityPalette());
+    f.feed("\x1B[2;3H\x1B[31m\x1B" "7");
+    f.feed("\x1B[4;6H\x1B[32m\x1B[s"); // overwrite the same slot
+    f.feed("\x1B[1;1H\x1B[0m\x1B" "8");
+    CHECK_EQ(f.terminal.cursorX(), 5);
+    CHECK_EQ(f.terminal.cursorY(), 3);
+    f.feed("\x1B[1mX");
+    CHECK_EQ(f.cells[3 * 80 + 5].attributes.foreground.index, 10);
+    f.feed("\x1B[0m\x1B[u");
+    CHECK_EQ(f.terminal.cursorX(), 5);
+    CHECK_EQ(f.terminal.cursorY(), 3);
+    f.feed("\x1B[1mY");
+    CHECK_EQ(f.cells[3 * 80 + 5].character, 'Y');
+    CHECK_EQ(f.cells[3 * 80 + 5].attributes.foreground.index, 10);
+}
+
+PICOTTL_TEST(ansiResetAfterRestoreUsesDefaultsAndRetainsSavedSlot) {
+    for (const auto& sequence : saveRestore) {
+        Fixture f(identityPalette());
+        f.feed("\x1B[31;44;1;4;5;7m"); f.feed(sequence.save);
+        f.feed("\x1B[0;32m"); f.feed(sequence.restore);
+        f.feed("\x1B[0;34mB");
+        CHECK_EQ(f.cells[0].attributes.foreground.index, 4);
+        CHECK_EQ(f.cells[0].attributes.background.index, 0);
+        CHECK(!f.cells[0].attributes.underline && !f.cells[0].attributes.blink);
+        f.feed("\x1B" "c"); // existing RIS leaves the saved slot intact
+        f.feed(sequence.restore); f.feed("\x1B[27mR");
+        CHECK_EQ(f.cells[0].attributes.foreground.index, 9);
+        CHECK_EQ(f.cells[0].attributes.background.index, 4);
+        CHECK(f.cells[0].attributes.underline && f.cells[0].attributes.blink);
+        f.feed("\x1B[3"); f.ansi.resetAttributes(); f.feed("D");
+        CHECK_EQ(f.cells[1].attributes.foreground.index, 7);
+        CHECK_EQ(f.cells[1].attributes.background.index, 0);
+        CHECK(!f.cells[1].attributes.underline && !f.cells[1].attributes.blink);
+    }
+}
+
+PICOTTL_TEST(ansiRestoreKeepsEffectiveAndLogicalAttributesDistinct) {
+    for (const auto& sequence : saveRestore) {
+        Fixture f(identityPalette());
+        f.feed("\x1B[31m");
+        f.terminal.setAttributes({Color{13}, Color{6}, true, true});
+        f.feed(sequence.save); f.feed("\x1B[0;32m"); f.feed(sequence.restore);
+        CHECK_EQ(f.terminal.attributes().foreground.index, 13);
+        CHECK_EQ(f.terminal.attributes().background.index, 6);
+        CHECK(f.terminal.attributes().underline && f.terminal.attributes().blink);
+        f.feed("\x1B[1mX"); // recompute from the saved ANSI state, not the override
+        CHECK_EQ(f.cells[0].attributes.foreground.index, 9);
+        CHECK_EQ(f.cells[0].attributes.background.index, 0);
+        CHECK(!f.cells[0].attributes.underline && !f.cells[0].attributes.blink);
+    }
+}
+
+PICOTTL_TEST(ansiRestoreDoesNotRestoreParserOrVisibilityState) {
+    for (const auto& sequence : saveRestore) {
+        Fixture f(identityPalette());
+        f.feed("\x1B[31m\x1B[?25h"); // save while visible, then hide below
+        for (const char* p = sequence.save; *p; ++p) f.ansi.processByte(static_cast<std::uint8_t>(*p));
+        f.feed("\x1B[32m\x1B[?25l\x1B[999X\x1BQ");
+        for (const char* p = sequence.restore; *p; ++p) f.ansi.processByte(static_cast<std::uint8_t>(*p));
+        CHECK(f.terminal.cursorStyle() == CursorStyle::None);
+        f.feed("\x1B[1"); // incomplete CSI must not apply yet
+        CHECK_EQ(f.terminal.attributes().foreground.index, 1);
+        f.feed("mX");
+        CHECK_EQ(f.cells[0].attributes.foreground.index, 9);
+        CHECK(f.terminal.cursorStyle() == CursorStyle::None);
+    }
 }
 
