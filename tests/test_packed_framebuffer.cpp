@@ -9,6 +9,7 @@
 // SPDX-License-Identifier: MIT
 
 #include <cstdint>
+#include <vector>
 
 #include "framework/test.hpp"
 #include "picottl/PackedFramebuffer.hpp"
@@ -149,4 +150,64 @@ PICOTTL_TEST(insufficientStorageMakesFramebufferInert) {
     fb.setPixel(0, 0, Color{3}); // must be a safe no-op
     fb.fill(Color{3});
     CHECK_EQ(storage[0], 0x00);
+}
+
+namespace {
+template <unsigned Depth>
+void checkPackedCapacityBoundaries() {
+    using Buffer = picottl::PackedFramebuffer<Depth>;
+    const std::uint16_t widths[] = {1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17};
+    const auto mask = static_cast<std::uint8_t>((1u << Depth) - 1u);
+    for (const auto width : widths) for (std::uint16_t height = 1; height <= 3; ++height) {
+        const auto required = Buffer::bytesFor(width, height);
+        std::vector<std::uint8_t> storage(required + 2, 0xa5);
+        // The byte-offset address is valid for CPU drawing at every depth.
+        Buffer fb(storage.data() + 1, required, width, height);
+        CHECK(fb.isValid()); CHECK_EQ(fb.sizeBytes(), required);
+        CHECK_EQ(fb.strideBytes() * height, required);
+        for (std::uint16_t y = 0; y < height; ++y)
+            for (std::uint16_t x = 0; x < width; ++x)
+                fb.setPixel(x, y, Color{static_cast<std::uint8_t>((x * 11u + y * 7u) & mask)});
+        // Rewriting the last pixel must preserve every other field, including
+        // neighbours sharing a byte and 6-bit fields crossing byte boundaries.
+        fb.setPixel(width - 1, height - 1, Color{mask});
+        for (std::uint16_t y = 0; y < height; ++y)
+            for (std::uint16_t x = 0; x < width; ++x)
+                CHECK_EQ(fb.pixel(x, y).index, x == width - 1 && y == height - 1
+                    ? mask : static_cast<std::uint8_t>((x * 11u + y * 7u) & mask));
+        fb.fill(Color{mask});
+        fb.copyRows(0, height - 1, UINT16_MAX);
+        for (std::uint16_t y = 0; y < height; ++y)
+            for (std::uint16_t x = 0; x < width; ++x)
+                CHECK_EQ(fb.pixel(x, y).index, mask);
+        CHECK_EQ(storage.front(), 0xa5); CHECK_EQ(storage.back(), 0xa5);
+
+        std::vector<std::uint8_t> shortStorage(required, 0x5a);
+        Buffer shortBuffer(shortStorage.data(), required - 1, width, height);
+        CHECK(!shortBuffer.isValid()); CHECK_EQ(shortBuffer.sizeBytes(), 0u);
+        shortBuffer.setPixel(width - 1, height - 1, Color{mask});
+        shortBuffer.fill(Color{mask}); shortBuffer.copyRows(0, 1, UINT16_MAX);
+        CHECK_EQ(shortBuffer.pixel(0, 0).index, 0u);
+        for (const auto byte : shortStorage) CHECK_EQ(byte, 0x5a);
+        // Exact allocation gives ASan a redzone immediately after the frame.
+        std::vector<std::uint8_t> exact(required);
+        Buffer exactBuffer(exact.data(), exact.size(), width, height);
+        exactBuffer.fill(Color{mask});
+        CHECK_EQ(exactBuffer.pixel(width - 1, height - 1).index, mask);
+    }
+    std::uint8_t byte = 0x5a;
+    Buffer noWidth(&byte, 1, 0, 1), noHeight(&byte, 1, 1, 0), noStorage(nullptr, 1, 1, 1);
+    CHECK(!noWidth.isValid()); CHECK(!noHeight.isValid()); CHECK(!noStorage.isValid());
+}
+}
+
+PICOTTL_TEST(packedCapacityBoundariesAtEveryDepth) {
+    static_assert(picottl::PackedFramebuffer<1>::bytesFor(65535, 65535) == 536862720u);
+    static_assert(picottl::PackedFramebuffer<2>::bytesFor(65535, 65535) == 1073725440u);
+    static_assert(picottl::PackedFramebuffer<4>::bytesFor(65535, 65535) == 2147450880u);
+    static_assert(picottl::PackedFramebuffer<6>::bytesFor(65535, 65535) == 3221176320u);
+    static_assert(picottl::PackedFramebuffer<8>::bytesFor(65535, 65535) == 4294836225u);
+    checkPackedCapacityBoundaries<1>(); checkPackedCapacityBoundaries<2>();
+    checkPackedCapacityBoundaries<4>(); checkPackedCapacityBoundaries<6>();
+    checkPackedCapacityBoundaries<8>();
 }

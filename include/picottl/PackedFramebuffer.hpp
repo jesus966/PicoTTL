@@ -64,7 +64,10 @@ public:
                             : PixelFormat::Packed8;
 
     /// Storage bytes required for a given size. Usable in constant
-    /// expressions to size static buffers.
+    /// expressions to size static buffers. Each row occupies ceil(width *
+    /// BitsPerPixel / 8) bytes, including trailing padding bits; rows never
+    /// share a byte. The total fits size_t on RP2350 and supported hosts
+    /// for all uint16 dimensions, including 65535 x 65535 at 8 bpp.
     static constexpr std::size_t bytesFor(std::uint16_t width,
                                           std::uint16_t height) {
         return (static_cast<std::size_t>(width) * BitsPerPixel + 7u) / 8u *
@@ -73,7 +76,11 @@ public:
 
     /// Wraps caller-provided storage. If the storage is null or smaller
     /// than bytesFor(width, height), the framebuffer is empty (0 x 0)
-    /// and all drawing operations become no-ops.
+    /// and all drawing operations become no-ops. storageBytes is a caller
+    /// declaration: the allocation must actually contain that many accessible
+    /// bytes. Extra capacity is not part of sizeBytes(). CPU drawing requires
+    /// only byte alignment; RP2350 scanout imposes separate word-alignment
+    /// and packing checks. Storage is borrowed and must outlive its uses.
     PackedFramebuffer(std::uint8_t* storage, std::size_t storageBytes,
                       std::uint16_t width, std::uint16_t height) {
         if (storage == nullptr || width == 0 || height == 0 ||

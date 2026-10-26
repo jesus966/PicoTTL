@@ -1072,3 +1072,58 @@ PICOTTL_TEST(engineDmaProgrammingSurvivesRestartAndSourceReplacement) {
         }
     }
 }
+
+PICOTTL_TEST(engineTimingTableExactAndOneWordShortCapacities) {
+    for (const std::uint16_t front : {0, 4}) {
+        auto requested = timing; requested.hFrontPorch = front;
+        const auto required = HardwareScanlineEngine::timingWordsFor(requested);
+        for (const auto capacity : {required - 1, required}) {
+            sdk::reset(); Fixture f;
+            std::vector<std::uint32_t> table(required + 2, 0xfeedcafeu);
+            auto config = f.config(); config.timingBuffer = table.data() + 1;
+            config.timingBufferWords = capacity;
+            {
+                HardwareScanlineEngine engine(config);
+                if (capacity < required) {
+                    CHECK(!engine.configure(requested)); checkRejectedStart(engine);
+                    CHECK_EQ(sdk::recording.calls, 0u); checkNoPinChanges(); checkReleased();
+                    for (const auto word : table) CHECK_EQ(word, 0xfeedcafeu);
+                    --requested.vBackPorch; // valid retry fits the same declared capacity
+                    CHECK(engine.configure(requested));
+                } else {
+                    CHECK(engine.configure(requested));
+                }
+                CHECK(engine.start()); engine.stop(); CHECK(engine.start()); engine.stop();
+                CHECK(sdk::recording.dma[0].read == table.data() + 1);
+                CHECK_EQ(sdk::recording.dma[0].count,
+                    HardwareScanlineEngine::timingWordsFor(requested));
+                CHECK(sdk::recording.dma[0].count <= capacity);
+            }
+            CHECK_EQ(table.front(), 0xfeedcafeu); CHECK_EQ(table.back(), 0xfeedcafeu);
+            checkReleased();
+            requested = timing; requested.hFrontPorch = front;
+        }
+    }
+}
+
+PICOTTL_TEST(engineRejectedPixelSourcesPreserveConfiguredBinding) {
+    for (unsigned failure = 0; failure < 6; ++failure) {
+        sdk::reset(); Fixture f;
+        alignas(std::uint32_t) std::uint8_t replacement[4]{};
+        HardwareScanlineEngine engine(f.config());
+        CHECK(engine.setPixelSource(f.pixels, 4)); CHECK(engine.configure(timing));
+        const auto calls = sdk::recording.calls;
+        const auto* candidate = failure == 0 ? f.pixels + 1 : f.pixels;
+        const std::size_t bytes = failure == 1 ? 0u : failure == 2 ? 3u : failure == 3 ? 5u : 4u;
+        const std::uint8_t depth = failure == 4 ? 6 : 1;
+        const std::uint8_t pins = failure == 5 ? 2 : 1;
+        CHECK(!engine.setPixelSource(candidate, bytes, depth, pins));
+        CHECK_EQ(sdk::recording.calls, calls);
+        CHECK(engine.start()); CHECK(sdk::recording.dma[2].read == f.pixels);
+        CHECK_EQ(sdk::recording.dma[2].count, 1u); engine.stop();
+        CHECK(engine.setPixelSource(replacement, sizeof replacement));
+        CHECK(engine.configure(timing)); CHECK(engine.start());
+        CHECK(sdk::recording.dma[2].read == replacement); engine.stop();
+        CHECK(engine.setPixelSource(nullptr, 0)); checkRejectedStart(engine);
+    }
+}
