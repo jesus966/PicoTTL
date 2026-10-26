@@ -56,10 +56,15 @@ Ordinary tests:
 ```sh
 cmake -S tests -B build-host -G Ninja -DCMAKE_CXX_COMPILER=g++-13
 cmake --build build-host --parallel 2
-ctest --test-dir build-host --output-on-failure --verbose
+ctest --test-dir build-host --output-on-failure --verbose --no-tests=error
 ```
 
-The CTest entry invokes the existing runner, which reports all 68 cases.
+The single CTest registration, `picottl_host_tests`, invokes the existing runner,
+which reports each individual case. List registrations with
+`ctest --test-dir build-host -N`. The registration count is not the case count.
+`--no-tests=error` prevents an empty suite from passing unnoticed.
+CTest resolves the built executable and works with out-of-source builds;
+the executable can also be run directly for debugging.
 For ASan, UBSan and gcov, use a fresh, separate directory:
 
 ```sh
@@ -69,7 +74,7 @@ cmake -S tests -B build-quality -G Ninja \
 cmake --build build-quality --parallel 2
 ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
-  ctest --test-dir build-quality --output-on-failure --verbose
+  ctest --test-dir build-quality --output-on-failure --verbose --no-tests=error
 mkdir -p reports/coverage
 lcov --capture --directory build-quality --gcov-tool gcov-13 \
   --output-file reports/coverage/raw.info

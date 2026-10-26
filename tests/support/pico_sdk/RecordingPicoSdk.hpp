@@ -41,6 +41,7 @@ struct DmaCall {
     const volatile void* read = nullptr;
     volatile void* write = nullptr;
     std::uint32_t count = 0;
+    std::uint32_t configuredCtrl = 0;
     unsigned configurations = 0;
 };
 struct Recording {
@@ -147,7 +148,9 @@ inline void pio_sm_init(PIO p, uint sm, uint pc, const pio_sm_config* c) {
     r.fullPeriodEncoded[instance][sm] = c->fullPeriodEncoded;
     pio_sm_set_enabled(p, sm, false);
 }
-inline uint pio_get_dreq(PIO, uint sm, bool) { return sm; }
+inline uint pio_get_dreq(PIO pio, uint sm, bool tx) {
+    return picottl_test::sdk::index(pio) * 8u + sm + (tx ? 0u : 4u);
+}
 inline void pio_sm_clear_fifos(PIO, uint) { ++picottl_test::sdk::recording.calls; }
 inline void pio_sm_restart(PIO, uint) { ++picottl_test::sdk::recording.calls; }
 inline void pio_sm_exec(PIO, uint, uint) { ++picottl_test::sdk::recording.calls; }
@@ -231,17 +234,30 @@ inline bool dma_channel_is_claimed(uint ch) { assert(ch < NUM_DMA_CHANNELS); ret
 inline void dma_channel_claim(uint ch) { assert(!dma_channel_is_claimed(ch)); picottl_test::sdk::recording.dmaClaimed[ch] = true; ++picottl_test::sdk::recording.calls; }
 inline void dma_channel_unclaim(uint ch) { assert(dma_channel_is_claimed(ch)); picottl_test::sdk::recording.dmaClaimed[ch] = false; ++picottl_test::sdk::recording.calls; ++picottl_test::sdk::recording.releases; }
 inline bool dma_channel_is_busy(uint ch) { return (dma_hw->ch[ch].ctrl_trig & DMA_CH0_CTRL_TRIG_BUSY_BITS) != 0; }
-inline dma_channel_config dma_channel_get_default_config(uint ch) { return {1u | (ch << DMA_CH0_CTRL_TRIG_CHAIN_TO_LSB)}; }
+inline dma_channel_config dma_channel_get_default_config(uint ch) { return {1u | (DMA_SIZE_32 << 2u) | 0x10u | (63u << 17u) |
+    (ch << DMA_CH0_CTRL_TRIG_CHAIN_TO_LSB)}; }
 inline void channel_config_set_chain_to(dma_channel_config* c, uint ch) { c->ctrl = (c->ctrl & ~DMA_CH0_CTRL_TRIG_CHAIN_TO_BITS) | (ch << DMA_CH0_CTRL_TRIG_CHAIN_TO_LSB); }
-inline void channel_config_set_transfer_data_size(dma_channel_config*, uint) {}
-inline void channel_config_set_read_increment(dma_channel_config*, bool) {}
-inline void channel_config_set_write_increment(dma_channel_config*, bool) {}
-inline void channel_config_set_dreq(dma_channel_config*, uint) {}
-inline void channel_config_set_bswap(dma_channel_config*, bool) {}
+// RP2350 SDK 2.3.0 CTRL_TRIG fields. Model configuration, not DMA execution.
+inline void channel_config_set_transfer_data_size(dma_channel_config* c, uint size) {
+    c->ctrl = (c->ctrl & ~0xcu) | (size << 2u);
+}
+inline void channel_config_set_read_increment(dma_channel_config* c, bool enabled) {
+    c->ctrl = (c->ctrl & ~0x30u) | (enabled ? 0x10u : 0u);
+}
+inline void channel_config_set_write_increment(dma_channel_config* c, bool enabled) {
+    c->ctrl = (c->ctrl & ~0xc0u) | (enabled ? 0x40u : 0u);
+}
+inline void channel_config_set_dreq(dma_channel_config* c, uint dreq) {
+    c->ctrl = (c->ctrl & ~0x7e0000u) | (dreq << 17u);
+}
+inline void channel_config_set_bswap(dma_channel_config* c, bool enabled) {
+    c->ctrl = (c->ctrl & ~0x01000000u) | (enabled ? 0x01000000u : 0u);
+}
 inline void dma_channel_configure(uint ch, const dma_channel_config* c, volatile void* write, const volatile void* read, std::uint32_t count, bool trigger) {
     assert(!trigger); // The engine must configure the whole group before triggering.
     auto& r = picottl_test::sdk::recording;
     auto& call = r.dma[ch];
+    call.configuredCtrl = c->ctrl;
     call.read = read; call.write = write; call.count = count; ++call.configurations;
     dma_hw->ch[ch].ctrl_trig = c->ctrl; ++r.calls;
 }

@@ -1012,3 +1012,63 @@ PICOTTL_TEST(engineRejectedPolarityReconfigurationRetainsOnlyOwnedResources) {
     }
     checkReleased(); CHECK(sdk::recording.smClaimed[0][3]); CHECK(sdk::recording.dmaClaimed[9]);
 }
+
+PICOTTL_TEST(engineDmaProgrammingSurvivesRestartAndSourceReplacement) {
+    // Nondefault channels and state machines expose accidental fixed mappings.
+    for (unsigned pio = 0; pio < 3; ++pio) {
+        for (const std::uint8_t depth : {1, 2, 4, 8}) {
+            sdk::reset(); Fixture f;
+            auto c = f.config();
+            c.pioInstance = static_cast<std::uint8_t>(pio);
+            c.stateMachine = 2; c.pixelStateMachine = 3;
+            c.dmaDataChannel = 4; c.dmaControlChannel = 5;
+            c.pixelDmaDataChannel = 6; c.pixelDmaControlChannel = 7;
+            alignas(std::uint32_t) std::uint8_t replacement[32]{};
+            {
+                HardwareScanlineEngine engine(c);
+                const auto verify = [&](const std::uint8_t* source) {
+                    // Exact SDK CTRL_TRIG encoding: word transfers, incrementing
+                    // reads only, correct TX DREQ, and byte swap only for pixels.
+                    const std::uint32_t wordEnabled = 1u | (2u << 2u);
+                    const auto& timingDma = sdk::recording.dma[4];
+                    const auto& pixelDma = sdk::recording.dma[6];
+                    CHECK_EQ(timingDma.configuredCtrl, wordEnabled | 0x10u |
+                        ((pio * 8u + 2u) << 17u) | (5u << 13u));
+                    CHECK_EQ(pixelDma.configuredCtrl, wordEnabled | 0x10u |
+                        ((pio * 8u + 3u) << 17u) | (7u << 13u) | 0x01000000u);
+                    CHECK(timingDma.read == f.table);
+                    CHECK(timingDma.write == &sdk::pios[pio].txf[2]);
+                    CHECK_EQ(timingDma.count, 28u);
+                    CHECK(pixelDma.read == source);
+                    CHECK(pixelDma.write == &sdk::pios[pio].txf[3]);
+                    CHECK_EQ(pixelDma.count, static_cast<std::uint32_t>(depth));
+                    for (const unsigned control : {5u, 7u}) {
+                        const auto& rewind = sdk::recording.dma[control];
+                        CHECK_EQ(rewind.configuredCtrl, wordEnabled |
+                            (63u << 17u) | (control << 13u));
+                        CHECK_EQ(rewind.count, 1u);
+                        CHECK(rewind.write == &dma_hw->ch[control - 1u].al3_read_addr_trig);
+                        CHECK(rewind.read != nullptr);
+                        const auto expected = control == 5u
+                            ? static_cast<const void*>(f.table)
+                            : static_cast<const void*>(source);
+                        CHECK_EQ(*static_cast<const volatile std::uint32_t*>(rewind.read),
+                            static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(expected)));
+                    }
+                };
+                CHECK(engine.setPixelSource(f.pixels, std::size_t{4} * depth, depth));
+                CHECK(engine.configure(timing)); verify(f.pixels);
+                for (unsigned cycle = 0; cycle < 2; ++cycle) {
+                    CHECK(engine.start()); verify(f.pixels); engine.stop();
+                }
+                CHECK(engine.setPixelSource(replacement, std::size_t{4} * depth, depth));
+                CHECK(engine.configure(timing));
+                CHECK(engine.start()); verify(replacement); engine.stop();
+            }
+            for (unsigned channel = 4; channel <= 7; ++channel)
+                CHECK(!sdk::recording.dmaClaimed[channel]);
+            CHECK(!sdk::recording.smClaimed[pio][2]);
+            CHECK(!sdk::recording.smClaimed[pio][3]);
+        }
+    }
+}

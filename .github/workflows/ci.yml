@@ -31,7 +31,7 @@ jobs:
       - name: Build
         run: cmake --build build-host
       - name: Run tests
-        run: ./build-host/picottl_tests
+        run: ctest --test-dir build-host --output-on-failure --verbose --no-tests=error
 
   firmware:
     name: RP2350 firmware build

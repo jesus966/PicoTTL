@@ -80,8 +80,14 @@ before it is considered done.
 ```sh
 cmake -S tests -B build-host -G Ninja
 cmake --build build-host
-./build-host/picottl_tests
+ctest --test-dir build-host -N
+ctest --test-dir build-host --output-on-failure --verbose --no-tests=error
 ```
+
+The standalone `tests/` CMake project is the host entry point; the root
+project builds RP2350 firmware. One CTest registration runs the complete
+runner, which reports individual cases. `--verbose` preserves that output
+on success; `--output-on-failure` shows failures.
 
 - The suite must pass. Backend lifecycle regressions also run on the
   host against a recording scanline engine; they do not emulate or

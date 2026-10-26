@@ -40,7 +40,7 @@ jobs:
         run: cmake --build build-quality --parallel 2
       - name: Run instrumented host suite
         id: tests
-        run: ctest --test-dir build-quality --output-on-failure --verbose
+        run: ctest --test-dir build-quality --output-on-failure --verbose --no-tests=error
       - name: Collect host coverage
         if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
         run: |
