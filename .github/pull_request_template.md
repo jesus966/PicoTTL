@@ -30,8 +30,8 @@ CONTRIBUTING.md, "Architecture-first workflow").
 - Wiring (reference connector unless justified):
 - System clock:
 - What was verified, and result: (photos welcome)
-- [ ] Not applicable - platform-independent change only (a maintainer
-      will hardware-test before merge)
+- [ ] Not applicable - platform-independent change only
+- [ ] Physical validation pending - record the untested scope and test plan
 
 ## Notes for the reviewer
 

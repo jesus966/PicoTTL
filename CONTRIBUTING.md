@@ -2,8 +2,19 @@
 
 Thank you for your interest. PicoTTL is a deliberately disciplined
 project: the rules below are not bureaucracy, they are the mechanism
-that keeps a frozen public API and three hardware-validated backends
-trustworthy. Please read them before opening a pull request.
+that preserves a frozen public API and disciplined verification of the
+three video backends. Please read them before opening a pull request.
+
+## Human-written and AI-assisted contributions
+
+Both are welcome and evaluated against the same technical requirements.
+Follow [AI_POLICY.md](AI_POLICY.md); coding agents should also read
+[AGENTS.md](AGENTS.md). Briefly disclose substantial AI-generated work in
+the PR and describe your verification; no particular provider or assistant
+is required. Report checks actually run, their results, unexecuted checks
+and remaining risks truthfully. Distinguish physical test results from host
+tests, compilation and electrical measurements. The existing design,
+review and PR workflow below applies to all contributions.
 
 ## The three governing documents
 
@@ -73,7 +84,9 @@ before it is considered done.
   could alter any validated visual output, re-run the relevant ones.
 - No hardware? Contributions to the platform-independent layers can be
   validated with the host suite alone - say so in the PR, and a
-  maintainer will hardware-test before merge.
+  report which hardware checks you did not execute. The maintainer decides
+  what additional validation is needed and who can perform it; contributors
+  and other testers may supply evidence.
 
 ## Automated tests
 
