@@ -84,6 +84,12 @@ ctest --test-dir build-host -N
 ctest --test-dir build-host --output-on-failure --verbose --no-tests=error
 ```
 
+Portable production sources are listed once in
+`cmake/PicoTTLPortableSources.cmake`, consumed by both firmware and host
+builds. Add portable implementation files there; platform-specific sources
+remain in their respective build projects. The quality-tool allowlist is a
+separate analysis-scope policy, excluding generated fonts and hardware execution.
+
 The standalone `tests/` CMake project is the host entry point; the root
 project builds RP2350 firmware. One CTest registration runs the complete
 runner, which reports individual cases. `--verbose` preserves that output
