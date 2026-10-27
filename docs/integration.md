@@ -126,9 +126,10 @@ The `picottl` target and public includes such as
 CMake variables and targets used by PicoTTL's own examples, diagnostics,
 tests and tools are not public interfaces.
 
-PicoTTL requires an RP2350 target. The Arm build is hardware-validated;
-the Pico SDK's RP2350 RISC-V platform is not currently validated by the
-project.
+PicoTTL requires an RP2350 target. The maintainer has physically tested all
+examples on a Raspberry Pi Pico 2 using Arm Cortex-M33, with an IBM 5151
+and a Samtron SC-431E. These results do not establish physical validation
+of RISC-V execution or imply unrecorded electrical measurements.
 
 ## Host tests
 

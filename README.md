@@ -20,6 +20,17 @@ display.begin(VideoMode::IbmMda);   720x350 @ 50 Hz (18.43 kHz)
 text.print("Hello, 1981");          pixel-exact 9x14 IBM glyphs
 ```
 
+## AI-driven implementation, human-directed engineering
+
+Nearly all PicoTTL code and documentation are written using AI tools.
+The human maintainer directs the engineering, approves architectural and
+technical decisions, and is responsible for verification and acceptance.
+AI-generated changes undergo engineering review and verification.
+All examples have been physically tested on Raspberry Pi Pico 2 using Arm
+Cortex-M33, with an IBM 5151 and a Samtron SC-431E. Hardware results must be distinguished from
+host tests, builds and electrical measurements. See the
+[AI Development Policy](AI_POLICY.md).
+
 ## Goals
 
 - Drive **original IBM monitors** (MDA 5151, CGA 5153-class, EGA 5154)
@@ -62,7 +73,8 @@ will notice first:
   fonts are generated from IBM character ROM dumps; CGA color 6 is
   brown for the same reason it was in 1981.
 - **Hardware validation.** Every feature ships with an example that
-  was verified on a real CRT before the feature is considered done.
+  supports real-CRT testing. Validation results identify the tested hardware
+  and scope; later signal-path changes need appropriate regression evidence.
 - **No hidden machinery**: no heap allocations, no exceptions, no
   interrupts taken by the framework, no implicit hardware claims. The
   application owns every buffer and every hardware resource listed in
@@ -89,16 +101,18 @@ across backends. The full reference is
 
 ## Current status
 
-Fully implemented and **validated end to end on real hardware** (IBM
-5151, Samtron SC-431E CGA/EGA monitor), including the reference
-connector wiring, all examples, the three showcase demonstrations and
-the three diagnostics applications. There are no known functional
-issues.
+All examples have been physically tested by the maintainer on a Raspberry
+Pi Pico 2 using Arm Cortex-M33, with an IBM 5151 and a Samtron SC-431E
+CGA/EGA monitor. Host
+tests, SDK recordings, static analysis and firmware builds provide separate
+software-verification evidence. These results do not imply electrical
+measurements that have not been recorded, or validation of every later change.
 
-- Three IBM standards implemented and validated on real monitors.
+- Three IBM standards implemented and tested on real monitors.
 - 45 numbered examples (each validates exactly one feature), 3
   showcase demonstrations, 3 CRT diagnostics applications.
-- 56 automated host tests (no hardware required).
+- Automated host regression tests (no hardware required); see
+  [the quality workflow](docs/code_quality.md) for scope and limitations.
 - IBM code pages 437 (default) and 850, generated from authentic ROM
   and CPI font data.
 - One canonical wiring (the EGA-superset **reference connector**) for
@@ -108,7 +122,8 @@ issues.
 
 Prerequisites: [Pico SDK](https://github.com/raspberrypi/pico-sdk)
 2.3.0 (the VS Code Raspberry Pi Pico extension installs everything),
-CMake ≥ 3.13, Ninja, ARM GCC.
+CMake ≥ 3.13, Ninja, ARM GCC. The commands below use the default Arm
+configuration, also used for the physical tests reported above.
 
 ```sh
 git clone https://github.com/jesus966/PicoTTL.git
@@ -228,7 +243,7 @@ are pattern suites for testing and adjusting real CRTs.
 | [docs/architecture.md](docs/architecture.md) | layers, abstractions, policies, backends, diagnostics, showcase demos, code pages, reference connector |
 | [docs/design_principles.md](docs/design_principles.md) | the project's written philosophy (21 principles) |
 | [docs/api_evolution.md](docs/api_evolution.md) | what "frozen" means; additive-evolution rules |
-| [docs/public_release_checklist.md](docs/public_release_checklist.md) | release process checklists |
+| [CONTRIBUTING.md](CONTRIBUTING.md#preparing-a-gitflow-release) | release preparation |
 | Example headers | per-feature contracts: validates / expected / regressions |
 
 ## Roadmap
