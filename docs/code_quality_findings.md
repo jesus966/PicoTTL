@@ -1,67 +1,52 @@
-# Initial quality triage
+# Static-analysis diagnostic triage
 
-These findings predate the quality-infrastructure branch. No production
-fixes or diagnostic suppressions are included. This triage record explains
-the exact entries in `tools/quality-baseline.json`; known diagnostics remain
-visible and new diagnostics fail the static-analysis job. Baseline acceptance
-does not mark a defect as resolved. Refresh both records after reviewed fixes
-or tool/scope changes, following `docs/code_quality.md`.
+This page explains reviewed diagnostics tracked in
+[the baseline](../tools/quality-baseline.json). Reports retain all findings;
+known diagnostics may pass comparison, new ones fail, and infrastructure or
+incomplete-report errors fail separately. Baseline membership is not proof
+that a diagnostic is harmless or that a defect has been fixed. See the
+[comparison and update procedure](code_quality.md#static-analysis-baseline).
 
-## Confirmed arithmetic defect: timing frequency denominator
+## Corrected timing arithmetic and a stale baseline entry
 
-- Tool: clang-tidy 18.1.3,
-  `bugprone-implicit-widening-of-multiplication-result`.
-- Location: `include/picottl/video/VideoTiming.hpp:70`,
-  `VideoTiming::refreshRateMilliHz()`.
-- Evidence: `hTotal() * vTotal()` is evaluated in 32 bits before division
-  into the 64-bit numerator. A descriptor with `hActive=65535`,
-  `hFrontPorch=1`, `vActive=65535`, `vFrontPorch=1`, and the other spans
-  zero has totals 65536 each; their product wraps to zero, causing an
-  integer division by zero. This follows directly from the unsigned types
-  and was reproduced in a temporary standalone program with GCC 13 UBSan
-  (`VideoTiming.hpp:70:64: runtime error: division by zero`, exit 1).
-- Severity: medium, high confidence for custom descriptors. Current
-  catalog modes do not approach this limit. This does not establish a
-  failure on existing MDA/CGA/EGA timings.
-- Follow-up: a separate bugfix should widen before multiplication and
-  define invalid-descriptor handling, with UBSan regression inputs.
+`VideoTiming::refreshRateMilliHz()` now widens horizontal/vertical totals
+before multiplication, guards a zero denominator and checks representability
+before returning uint32. Its zero-result contract is documented in
+[VideoTiming.hpp](../include/picottl/video/VideoTiming.hpp) and exercised by
+[test_video_timing.cpp](../tests/test_video_timing.cpp), including constexpr
+cases. The earlier unsigned-product/zero-divisor defect is not outstanding.
+
+The baseline still contains its `bugprone-implicit-widening-of-multiplication-result`
+entry. A report should identify it as missing when the warning no longer
+appears. Removing an obsolete entry requires the normal reviewed baseline
+update; documentation changes do not alter that gate or suppress diagnostics.
 
 ## CGA array warning: not established as a defect
 
-- Tool: clang static analyzer through clang-tidy,
-  `clang-analyzer-core.UndefinedBinaryOperatorResult`.
-- Location: `src/rp2350/CgaDisplayDevice.cpp:96`, `begin()`.
-- The reported path reaches `colorPins[4]`. The earlier capability check
-  admits only 1/2/4-bit formats, making that path infeasible under the
-  current capability implementation. Treat as a likely interprocedural
-  false positive, not demonstrated out-of-bounds access. Keep the report
-  visible pending a narrow analysis/annotation decision; do not alter the
-  public API or suppress all core analyzer warnings.
+clang-tidy's `clang-analyzer-core.UndefinedBinaryOperatorResult` reports a path
+to `colorPins[4]` in `CgaDisplayDevice::begin()`. The preceding capability
+check admits only 1/2/4-bit formats, making that path infeasible under the
+current implementation. Treat it as a likely interprocedural false positive,
+not demonstrated out-of-bounds access. Preserve the report pending a narrow
+analysis decision; do not suppress all core analyzer warnings.
 
 ## Intentional repeated mode height
 
-- Tool: clang-tidy, `bugprone-branch-clone`.
-- Location: `include/picottl/VideoMode.hpp:78`, `modeHeight()`.
-- EGA350 and MDA/default both return 350. This is correct current behavior;
-  the diagnostic is a maintainability observation, not a runtime defect.
+`bugprone-branch-clone` identifies identical EGA350 and MDA/default results in
+`modeHeight()` in [VideoMode.hpp](../include/picottl/VideoMode.hpp). Both are
+350 under the current catalog. This is a maintainability diagnostic, not a
+runtime defect.
 
 ## Device timing-table initialization warnings
 
-- Tool: cppcheck 2.13.0, `uninitMemberVar`.
-- Locations: MDA constructor at `src/rp2350/MdaDisplayDevice.cpp:52`,
-  CGA at `src/rp2350/CgaDisplayDevice.cpp:50`, EGA at
-  `src/rp2350/EgaDisplayDevice.cpp:55`.
-- The table is deliberately filled by engine configuration before DMA
-  starts. The analyzer does not model that ownership/write path. There
-  is no demonstrated uninitialized read in the valid startup path.
-  Retain as pre-existing warnings until that contract is narrowly encoded
-  or verified; zero-filling production tables is not part of this branch.
+cppcheck's `uninitMemberVar` identifies the MDA/CGA/EGA devices' embedded
+timing tables. Configuration fills the used entries before DMA setup; the
+analyzer does not model that ownership/write path. No uninitialized read is
+demonstrated on valid startup. Resource/configuration tests exercise this
+sequence without executing hardware transfers. Keep these reports visible
+until a focused reviewed decision changes the baseline or implementation.
 
-Repeated header diagnostics occur once per analyzed translation unit.
-Neither clean sanitizer tests nor an empty CodeQL SARIF dismisses the
-arithmetic defect: the current 68 tests do not exercise its extreme input.
-
-The initial native runs produced 9 clang-tidy diagnostic occurrences
-(4 repeated-height, 4 timing arithmetic, 1 CGA path warning), 3 cppcheck
-warnings, and no infrastructure errors. CodeQL CLI 2.27.3 completed 98
-security-extended queries with 0 alerts in both raw and scoped SARIF.
+Header diagnostics may repeat across translation units. Compare both raw
+occurrences and stable unique identities; do not hard-code historical case
+counts or percentages as evidence of the current suite. Host sanitizer and
+CodeQL results complement these findings rather than overruling them.

@@ -12,7 +12,19 @@ throughout between **architectural concepts** (binding for every backend,
 present and future) and the **current RP2350 implementation** (free to
 change at any time).
 
-See also: [design_principles.md](design_principles.md).
+## Reading this reference
+
+New users should start with [Getting started](getting-started.md); application
+integration is in [integration.md](integration.md). This document retains the
+full design reference. Public header comments are normative API contracts.
+
+- Rendering and backend boundaries: [core abstractions](#4-core-abstractions).
+- Buffer retirement, storage and multicore: [ownership](#5-object-ownership-and-lifetime), [memory](#7-memory-policy).
+- GPIO windows and claims: [hardware resources](#8-hardware-resource-policy).
+- Interface mapping: [reference connector](#15-the-reference-connector).
+- PIO/DMA, custom timing and effective clocks: [implementation appendix](#appendix-a---current-rp2350-implementation-informative-not-binding).
+- Contribution philosophy: [design principles](design_principles.md).
+
 
 ---
 
@@ -73,8 +85,8 @@ DisplayDevice               (backend interface; Display is the app facade over i
 Backend internals           (per standard, per platform - free-form)
 ```
 
-The Text and Terminal APIs are FROZEN (hardware-validated on a real
-IBM 5151). New terminal-adjacent functionality is never added to them:
+The Text and Terminal APIs are FROZEN by the public compatibility contract.
+New terminal-adjacent functionality is never added to them:
 it arrives as additive layers above Terminal.
 
 Two invariants of the text subsystem:
@@ -162,9 +174,10 @@ raster configuration. One backend may serve several modes -
 MDA backend.
 
 IBM-exact timings are curated defaults, never an architectural limit:
-the raster engine underneath is timing-agnostic and accepts any
-`VideoTiming`, so non-standard, experimental and diagnostic modes are
-first-class. A backend advertises its supported set through
+the internal raster engine accepts engine-representable `VideoTiming`
+values. Public `Display::begin()` accepts catalog `VideoMode` values only;
+it has no custom-timing overload. Adding a catalog mode or implementing a
+backend is distinct from supplying an internal timing descriptor. A backend advertises its supported set through
 `DisplayDevice::supports()`; `begin()` fails explicitly for the rest.
 New enumerators are added over time; existing values never change.
 
@@ -220,13 +233,28 @@ provides character output on a fixed cell grid (80x25 with the MDA
 Both are platform-independent and depend only on the layer below.
 
 `Font` is an immutable resource descriptor over flash-resident glyph
-data; fonts are owned by nobody and referenced by `Text`. There is
+data; font descriptors and data have external/static ownership and are referenced by `Text`. There is
 deliberately no GlyphRenderer class: glyph rendering is the composition
 of `Font::glyph()` and the opaque `Graphics::drawBitmap()` - a separate
 class would only forward calls. Text attributes (colors, underline)
 arrived without needing one, confirming the decision; if a future
 feature ever complicates this, a renderer is extracted inside `Text`
 without public API change.
+
+### Rendering API lookup
+
+| Task | Contract / working example |
+|---|---|
+| Pixels, horizontal/vertical runs, inclusive lines, inversion, bitmaps and row copying | [Graphics.hpp](../include/picottl/Graphics.hpp), [clipping](graphics_clipping.md), examples 03-15 |
+| Byte glyphs, font families, CP437/CP850, opaque text and bounded printf | [Text.hpp](../include/picottl/Text.hpp), [Font.hpp](../include/picottl/Font.hpp), examples 16-22 and 44 |
+| Cell buffer, auto-scroll, repaint, cursor and blink driven by update(nowMs) | [Terminal.hpp](../include/picottl/Terminal.hpp), examples 23, 32 and 41 |
+| Incremental controls, CSI and logical attribute save/restore | [AnsiTerminal.hpp](../include/picottl/AnsiTerminal.hpp), examples 24, 33 and 42 |
+
+Text is byte-oriented rather than UTF-8. Terminal snapshots its grid at
+construction and must be recreated after a geometry change. ANSI uses a
+16-color application palette; extended-color parameters select defaults,
+not true-color output. ESC 7/8 and CSI s/u share one saved cursor/attribute
+slot. These are implemented subsets, not a general VT100/VT220 guarantee.
 
 ## 5. Object ownership and lifetime
 
@@ -501,7 +529,7 @@ code above `DisplayDevice` ever gains an SDK dependency.
 code remain unchanged - `display.begin(VideoMode::MdaOverscan);` is the
 only new line an application writes.
 
-### IBM CGA (implemented, hardware-validated)
+### IBM CGA (implemented; maintainer-reported monitor tests)
 
 The recipe above, executed: `VideoMode::IbmCga640`/`IbmCga320`, two
 timing entries, `rp2350::CgaDisplayDevice` reusing the internal raster
@@ -512,7 +540,7 @@ backend Config names the monitor's signals (`redPin`, `bluePin`,
 Application change required: **one line** (the device construction) -
 proven by diffing the ANSI serial terminal examples (24 vs 33).
 
-### IBM EGA (implemented, hardware-validated)
+### IBM EGA (implemented; maintainer-reported monitor tests)
 
 Same recipe: `VideoMode::IbmEga350`, one timing entry,
 `rp2350::EgaDisplayDevice` with IBM's Primary/Secondary signal naming
@@ -781,7 +809,8 @@ same position IBM took in 1984: the EGA card's DE-9 was designed as a
 superset that drove MDA monitors (5151), CGA monitors (5153) and EGA
 monitors (5154) without rewiring. Every example, demonstration and
 diagnostics application (with one documented exception below) uses
-this single wiring, so monitors can be swapped freely:
+this single wiring, but monitor changes still require compatible firmware and an electrical
+assessment; the mapping alone does not make arbitrary monitors interchangeable:
 
 | GPIO | DE-9 | MDA monitor | CGA monitor | EGA monitor |
 |------|------|-------------|-------------|-------------|
@@ -821,17 +850,19 @@ Rules and rationale:
   GPIO 20 to GPIO 19.
 - **Ground goes to DE-9 pin 1 only.** On MDA and CGA monitors pin 2 is
   internally ground, but on the reference connector it carries GPIO 21
-  (Secondary Red). Connect the monitor signal wires directly, except for
+  (Secondary Red). The existing example headers describe signal wires with
   **470 ohm series resistors on HSYNC and VSYNC**. The VSYNC resistor is
-  empirically required for noise immunity; the same value on HSYNC keeps
-  the sync wiring consistent. On the EGA reference connector pin 2 is a
+  described in the example comments as a noise-immunity measure; the same
+  value on HSYNC keeps the sync wiring consistent. On the EGA reference connector pin 2 is a
   signal, not ground, so an MDA/CGA application must not connect Pico GND
   to that pin.
-- The monitor inputs are specified as **+5 V TTL**, but the **+3.3 V** GPIO
-  levels from the Raspberry Pi Pico are detected reliably by the monitors
-  used with PicoTTL. For a more serious or production-oriented project,
-  use buffers or level translators to raise the Pico's 3.3 V signals to
-  +5 V before they reach the monitor.
+- GPIO voltage settings and code pin assignments do not establish monitor
+  input thresholds, loading or noise margins. The maintainer reports example
+  operation on an IBM 5151 and Samtron SC-431E with Pico 2 in Arm mode; this
+  is not a measurement of every electrical parameter. Verify the chosen
+  monitor's electrical requirements before connection. Neither this table
+  nor host tests specify a universally safe direct connection or level-
+  translation circuit.
 - Scan rates still differ: 350-line modes must not be fed to a
   15.7 kHz CGA monitor and vice versa. The reference connector unifies
   *wiring*, not timing - select the application matching the attached
@@ -845,7 +876,8 @@ techniques (different PIO programs, CPU-assisted generation, other
 peripherals) without any change to the public API.
 
 - The backend compiles a mode's raster description into a static table of
-  32-bit segments (sync levels + duration, three segments per line) held
+  32-bit segments (sync levels + duration, four per line when the front
+  porch is nonzero, otherwise three) held
   in a fixed-size member of the device object.
 - A PIO state machine running at the pixel clock consumes the table; two
   chained DMA channels replay it forever (data channel streams, control
@@ -890,6 +922,31 @@ peripherals) without any change to the public API.
   generator through an internal display-enable GPIO; that design
   intentionally avoids embedded command formats (see design
   principles).
+
+### Scanout data flow
+
+```mermaid
+flowchart LR
+    Table[Timing table] --> TD[Timing DMA loop]
+    TD -->|PIO TX FIFO| Timing[Timing state machine]
+    Timing --> Sync[HSYNC and VSYNC]
+    Timing -->|internal display-enable GPIO| Pixels[Pixel state machine]
+    FB[Framebuffer] --> PD[Pixel DMA loop]
+    PD -->|PIO TX FIFO| Pixels
+    Pixels --> Video[Pixel GPIO group]
+```
+
+Each DMA loop has a streaming data channel chained to a control channel.
+The control channel reads one engine-owned address word and writes the data
+channel's trigger alias to rewind it; it is not a scanline descriptor array.
+The timing loop runs continuously. The pixel SM consumes fields during the
+visible window; its FIFO may be prefetched by DMA. Pixel output uses a second
+SM in the same PIO block, starts with synchronized divider phases, and runs
+two instructions per pixel. The encoded timing divider is exactly twice the
+pixel divider. Signal-only output omits the pixel loop and SM.
+
+This is configuration/data-flow evidence, not a measured waveform. Buffer
+lifetime and the [DMA shutdown contract](rp2350_dma_stop.md) still apply.
 
 ### Custom timing constraints
 

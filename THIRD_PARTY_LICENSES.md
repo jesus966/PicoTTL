@@ -87,6 +87,12 @@ the intended hardware experience.
 
 ## Images and video
 
-None yet. All screenshots, photographs and videos added to this
-repository will be original work by the project author (MIT, like the
-rest of the repository) unless explicitly annotated otherwise here.
+`docs/images/` contains `showcase-96-mda.jpg`, `showcase-97-cga.jpg`,
+`showcase-98-ega.jpg` and `reference-connector-wiring.jpg`.
+
+The project's attribution statement identifies screenshots, photographs and
+videos added here as original work by the project author (MIT, like the rest
+of the repository), unless explicitly annotated otherwise in this document.
+This review does not independently verify image authorship. Capture dates and
+hardware/firmware revisions are not recorded here, so these images alone are
+not measurement records for the current implementation.
