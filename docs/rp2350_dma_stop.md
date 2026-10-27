@@ -1,4 +1,4 @@
-# RP2350 DMA stop: audit finding A2
+# RP2350 DMA shutdown and restart
 
 ## Evidence and scope
 
@@ -24,12 +24,9 @@ In the project's Pico SDK 2.3.0:
   raw IRQ status. Calling it sequentially is not a substitute for first
   disabling the whole chained group.
 
-A2 is therefore a confirmed missing documented prerequisite, rather than
-an SDK workaround already applied on PicoTTL's behalf. Actual occurrence
-of a post-abort restart on a board has not been reproduced or measured here.
-The previous chain break and control-first abort order already reduced
-restart paths in this particular topology. Missing the documented workaround
-is not evidence that every stop, or a deterministic host sequence, fails.
+The engine applies these prerequisites to the complete owned group. An
+SDK function that aborts a single channel is not sufficient by itself to
+establish quiescence of both chained loops.
 
 ## Resource relationships and sequencing
 
@@ -45,10 +42,7 @@ owned once acquired, even after the pixel source is detached. The engine
 does not register interrupt handlers or enable DMA interrupts. Completion
 can nevertheless latch raw INTR bits.
 
-Previously, stop disabled PIO, broke only data-channel chains, then aborted
-timing control/data followed by pixel control/data. EN remained set throughout.
-
-Now stop:
+`stop()` performs the following sequence:
 
 1. Disables all owned PIO state machines.
 2. Builds the DMA mask from resource ownership, including retained pixel resources.
@@ -68,26 +62,27 @@ The blocking retirement wait retains the SDK's assumption of functioning
 bus slaves: outstanding transfers normally finish within a few cycles and
 do not require further PIO DREQ. It adds no fixed delay or FIFO-drain loop.
 A wedged bus slave could still block, as with the existing SDK abort. A
-timeout followed by resource release would be unsafe; this change does not
-add a new failure-return API or claim recovery from a hardware bus lockup.
+timeout followed by resource release would be unsafe; the engine does not
+provide a failure-return API or claim recovery from a hardware bus lockup.
 
 Start reapplies the existing DMA configurations before triggering either
 loop, restoring EN and CHAIN_TO after safe stop. The API, PIO programs,
 timing words, clock divisors, signal polarity and synchronized SM enable
 sequence are unchanged. No additional channels or state machines are used.
 
-### Relationship to M1 and concurrent callers
+### Restart and concurrent callers
 
-The old direct stop/start path already failed to restore data-channel
-CHAIN_TO (M1). Clearing EN for E5 additionally makes explicit rearming
-necessary. Reusing setupDma/setupPixelDma in start is that required rearm;
-restoring the original chain follows from the same configuration. There
-is no independent M1 redesign, new restart API or hardware validation of M1.
+Because shutdown clears EN and CHAIN_TO for every owned channel, `start()`
+reapplies both data/control configurations before triggering either loop.
+This restores the source/count, control-channel enable and original chaining.
+A successful `stop()` retains configuration and resource ownership for restart;
+a source change requires another successful `configure()`. Destruction stops
+owned DMA before releasing channels, state machines and loaded programs.
 
 Lifecycle operations must remain serialized by their caller. There are no
 engine ISRs that rearm channels. Concurrent start/configure/stop from another
 core or an external ISR writing the same registers is unsupported; this
-change does not introduce locks or claim thread safety. Other DMA channels
+engine does not introduce locks or claim thread safety. Other DMA channels
 must not chain into, or write trigger/configuration registers of, owned channels.
 
 ## Automated validation boundaries
@@ -100,26 +95,21 @@ reconfiguration preconditions, retained pixel ownership after detach, partial
 initialization, non-default channel numbers, unowned channels, empty groups
 and already-retired groups.
 
-These are ordering/logic tests, not an emulation of silicon. The recorder
-supplies register-operation outcomes; it does not prove the hardware callback
-implementation, actual late-write behaviour or full PioScanlineEngine
-start/configure execution. Existing host device lifecycle tests exercise real
-MDA/CGA/EGA device code with a recording scanline engine, not the real PIO/DMA
-engine. Cross-compilation checks the production implementation against SDK 2.3.0.
-The existing CI static-analysis/coverage scope excludes the hardware engine;
-the private helper receives an additional direct host analyzer check locally.
+These are ordering/logic tests, not an emulation of silicon. The host suite
+also compiles the actual PioScanlineEngine implementation under test-only
+names against the recording SDK. It checks configuration, source words,
+transfer fields, shutdown/rearm and ownership. The recorder supplies outcomes;
+it does not execute asynchronous DMA, late bus writes or PIO instructions.
+Device lifecycle tests additionally use RecordingScanlineEngine. See
+[code_quality.md](code_quality.md) for instrumentation and the deliberately
+narrower published coverage/static-analysis scope; passing tests do not
+measure PIO/DMA waveforms or erratum behaviour.
 
-Validation for this change: 77 host cases (68 existing plus 9 stop-order cases)
-pass both natively and with ASan/UBSan; 30 quality infrastructure tests pass.
-The Pico 2 Release build produces all 51 UF2 targets with SDK 2.3.0 and Arm
-GCC 15.2.1. clang-tidy 18.1.3 and cppcheck 2.13.0 retain the 9 and 3 known
-diagnostic occurrences respectively, with no new or missing baseline entries.
-Direct analysis of the new host test/helper adds no own-code diagnostics.
-CodeQL CLI 2.27.3 host analysis produces no alerts. actionlint 1.7.12 and
-`git diff --check` pass. Host-only coverage remains 83.29% lines and 85.34%
-functions under the existing scope; those percentages do not measure PIO/DMA.
+## Physical validation procedure
 
-## Physical validation procedure (not executed)
+This procedure was not executed during the documentation review. Reported
+example tests are separate evidence and do not establish these specific
+retirement/race assertions.
 
 Use a separate diagnostic firmware for Pico 2 with the same engine and SDK;
 do not add logging to the real-time PIO or modify existing examples. Record

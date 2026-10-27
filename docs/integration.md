@@ -10,6 +10,11 @@ targets and all board-level configuration.
 - Raspberry Pi Pico SDK 2.3.0 (the validated version)
 - CMake 3.13 or later
 - C++17
+- Working native SDK host tools (pioasm and, for UF2 output, picotool), or a
+  native compiler/dependencies able to build them. On Windows, an unrelated
+  `cl.exe` on PATH is not necessarily a working MSVC toolchain. A consuming
+  project may need its installed SDK `pioasm_DIR`/`picotool_DIR` package paths;
+  PicoTTL's top-level VS Code helper is not run when added as a subdirectory.
 
 PicoTTL must be added after `pico_sdk_init()`. Adding it earlier produces a
 configuration error rather than a later failure inside the SDK.
@@ -69,15 +74,21 @@ int main() {
     picottl::rp2350::MdaDisplayDevice::Config config;
     config.hsyncPin = 2;
 
-    picottl::rp2350::MdaDisplayDevice device(config);
+    static picottl::rp2350::MdaDisplayDevice device(config);
     picottl::Display display(device);
-    display.begin(picottl::VideoMode::IbmMda);
+    if (!display.begin(picottl::VideoMode::IbmMda)) {
+        return 1;
+    }
 
     while (true) {
         tight_loop_contents();
     }
 }
 ```
+
+The static backend keeps its embedded timing table off the main stack; its
+local initialization still follows clock setup. This is sync-only output,
+not text or pixels. Verify the monitor/interface before connecting hardware.
 
 The numbered examples contain complete framebuffer, graphics, text and
 terminal applications. Their CMake targets are not added to a consuming
@@ -97,8 +108,9 @@ Use `add_subdirectory(external/PicoTTL)` as shown above.
 ### Vendored copy
 
 Copy the PicoTTL source tree into `external/PicoTTL` and use the same
-`add_subdirectory()` call. Keep the complete `include/` and `src/` trees;
-generated PIO headers are produced by the build.
+`add_subdirectory()` call. Keep `CMakeLists.txt`, `cmake/`, `include/`, `src/` and
+`pico_sdk_import.cmake`; the root build imports its canonical portable list
+from `cmake/`. Generated PIO headers are produced by the build.
 
 ### FetchContent
 
@@ -139,5 +151,5 @@ not become part of the consuming firmware project:
 ```sh
 cmake -S external/PicoTTL/tests -B build-picottl-host -G Ninja
 cmake --build build-picottl-host
-./build-picottl-host/picottl_tests
+ctest --test-dir build-picottl-host --output-on-failure --verbose --no-tests=error
 ```

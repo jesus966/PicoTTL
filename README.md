@@ -5,10 +5,11 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Latest release downloads](https://img.shields.io/github/downloads/jesus966/PicoTTL/latest/total)](https://github.com/jesus966/PicoTTL/releases/latest)
 
-TTL video framework for the Raspberry Pi Pico 2 (RP2350). PicoTTL
-generates genuine IBM MDA, CGA and EGA video signals in hardware - PIO
-and DMA scan out every line with **zero CPU involvement** - and drives
-real period monitors through a handful of GPIOs and series resistors.
+TTL video framework for the Raspberry Pi Pico 2 (RP2350). PicoTTL uses
+PIO and DMA for IBM MDA, CGA and EGA scanout, with **no CPU service on the
+signal path** after startup. Applications draw into caller-owned memory.
+Start with [Getting started](docs/getting-started.md) to choose a backend,
+build an example and understand the electrical checks before connecting a monitor.
 
 ![PicoTTL demo 96 running on an IBM 5151](docs/images/showcase-96-mda.jpg)
 
@@ -26,9 +27,9 @@ Nearly all PicoTTL code and documentation are written using AI tools.
 The human maintainer directs the engineering, approves architectural and
 technical decisions, and is responsible for verification and acceptance.
 AI-generated changes undergo engineering review and verification.
-All examples have been physically tested on Raspberry Pi Pico 2 using Arm
-Cortex-M33, with an IBM 5151 and a Samtron SC-431E. Hardware results must be distinguished from
-host tests, builds and electrical measurements. See the
+The maintainer reports physical tests of all examples on Pico 2 using Arm
+Cortex-M33, with an IBM 5151 and a Samtron SC-431E. These reports are
+distinct from host tests, builds and electrical measurements. See the
 [AI Development Policy](AI_POLICY.md).
 
 ## Goals
@@ -48,9 +49,9 @@ host tests, builds and electrical measurements. See the
 
 | Standard | Modes | Format | Status |
 |---|---|---|---|
-| IBM MDA | 720×350 @ 50 Hz | Mono1 / Packed2 (video + intensity) | Hardware-validated on an IBM 5151 |
-| IBM CGA | 640×200, 320×200 @ 60 Hz | Mono1 / Packed2 / Packed4 (RGBI) | Hardware-validated on a Samtron SC-431E |
-| IBM EGA | 640×350 @ 60 Hz (+ CGA-compatible 200-line modes) | up to Packed8 (6-wire rgbRGB, 64 colors) | Hardware-validated |
+| IBM MDA | 720×350 @ 50 Hz | Mono1 / Packed2 (video + intensity) | Maintainer-reported tests on IBM 5151 |
+| IBM CGA | 640×200, 320×200 @ 60 Hz | Mono1 / Packed2 / Packed4 (RGBI) | Maintainer-reported tests on Samtron SC-431E |
+| IBM EGA | 640×350 @ 60 Hz (+ CGA-compatible 200-line modes) | up to Packed8 (6-wire rgbRGB, 64 colors) | Maintainer-reported tests on Samtron SC-431E |
 | Host | all of the above | all formats | In-memory backend for the automated test suite |
 
 Supported hardware: **Raspberry Pi Pico 2 (RP2350)**, Pico SDK 2.3.0,
@@ -101,10 +102,9 @@ across backends. The full reference is
 
 ## Current status
 
-All examples have been physically tested by the maintainer on a Raspberry
-Pi Pico 2 using Arm Cortex-M33, with an IBM 5151 and a Samtron SC-431E
-CGA/EGA monitor. Host
-tests, SDK recordings, static analysis and firmware builds provide separate
+The maintainer reports testing all examples on a Raspberry Pi Pico 2
+using Arm Cortex-M33, with an IBM 5151 and a Samtron SC-431E CGA/EGA
+monitor. Host tests, SDK recordings, static analysis and firmware builds provide separate
 software-verification evidence. These results do not imply electrical
 measurements that have not been recorded, or validation of every later change.
 
@@ -147,7 +147,7 @@ Run the automated test suite on your PC (no Pico needed):
 ```sh
 cmake -S tests -B build-host -G Ninja
 cmake --build build-host
-./build-host/picottl_tests
+ctest --test-dir build-host --output-on-failure --verbose --no-tests=error
 ```
 
 ## Using PicoTTL in your project
@@ -166,9 +166,11 @@ and submodule, vendored-copy and FetchContent integration.
 
 ## Wiring
 
-PicoTTL's canonical physical interface is the IBM EGA DE-9 connector -
-IBM's own universal adapter, which drove MDA, CGA and EGA monitors
-from one socket. One wiring serves every monitor:
+The table below records the example reference-connector mapping. It is not
+a universal connection procedure: verify connector orientation, monitor
+scan-rate limits, grounding, voltage margins and loading before connecting.
+Dedicated CGA backend examples have an intensity-pin exception described in
+[the full reference](docs/architecture.md#15-the-reference-connector).
 
 | GPIO | DE-9 pin | MDA | CGA | EGA |
 |------|----------|-----|-----|-----|
@@ -182,24 +184,22 @@ from one socket. One wiring serves every monitor:
 | 21 | 2 | - | - | Secondary Red |
 | GND | 1 | GND | GND | GND |
 
-Use **470 Ω series resistors only on HSYNC and VSYNC**. Connect the
-remaining monitor signal wires directly. Ground goes to DE-9 pin 1 only:
-on the EGA reference connector, DE-9 pin 2 is a signal (Secondary Red),
-while MDA/CGA monitors ground that pin internally. Full rules and rationale:
-[docs/architecture.md](docs/architecture.md), section 15. GPIO 4 is an
-internal handshake - never wire it to the monitor.
+Example headers specify 470-ohm series resistors on HSYNC and VSYNC and
+GPIO 4 as an internal handshake, left unwired. DE-9 pin 2 is an EGA signal,
+not a common ground connection. Preserve the distinction between these
+code/example assignments and a verified electrical interface for your monitor.
 
-### TTL voltage levels
+### Electrical checks
 
-The monitor inputs are specified as +5 V TTL, but the +3.3 V GPIO levels
-from the Raspberry Pi Pico are detected reliably by the monitors used with
-PicoTTL. For a more serious or production-oriented project, the ideal
-solution is to add buffers or level translators that raise the Pico's
-3.3 V signals to +5 V before they reach the monitor.
+Source code and host tests establish neither voltage margins nor permissible
+input loading. The reported monitor tests are not a universal approval of
+direct 3.3 V GPIO connections or a specification for a level translator.
+A monitor-specific electrical assessment is required; no new connection
+circuit is defined here.
 
-> **CRT safety**: these monitors have no protection against wrong scan
-> rates. Never feed 350-line timings to a 15.7 kHz CGA monitor or vice
-> versa.
+> **CRT compatibility:** verify supported scan rates before connecting or
+> changing modes. Engine acceptance of a timing does not establish monitor
+> compatibility or the presence of protective circuitry.
 
 ![PicoTTL reference connector wiring with a Raspberry Pi Pico 2](docs/images/reference-connector-wiring.jpg)
 
@@ -219,7 +219,7 @@ wiring and known regressions in its header.
 | 45 | MDA | Matrix rain tuned for medium/high-persistence phosphor monitors |
 | 96–98 | MDA/CGA/EGA | official showcase demonstrations |
 
-Diagnostics: `diagnostics/` (MDA) and `apps/{cga,ega}_crt_diagnostics/`
+Diagnostics: `apps/{mda,cga,ega}_crt_diagnostics/`
 are pattern suites for testing and adjusting real CRTs.
 
 ### Showcase demonstrations
@@ -238,18 +238,26 @@ are pattern suites for testing and adjusting real CRTs.
 
 ## Documentation map
 
-| Document | Contents |
+| Reader / task | Entry point |
 |---|---|
-| [docs/architecture.md](docs/architecture.md) | layers, abstractions, policies, backends, diagnostics, showcase demos, code pages, reference connector |
-| [docs/design_principles.md](docs/design_principles.md) | the project's written philosophy (21 principles) |
-| [docs/api_evolution.md](docs/api_evolution.md) | what "frozen" means; additive-evolution rules |
-| [CONTRIBUTING.md](CONTRIBUTING.md#preparing-a-gitflow-release) | release preparation |
-| Example headers | per-feature contracts: validates / expected / regressions |
+| First display or host-only trial | [Getting started](docs/getting-started.md) |
+| Embed the library / build requirements | [Integration](docs/integration.md) |
+| API contracts and compatibility | [Public headers](include/picottl/PicoTTL.hpp), [API evolution](docs/api_evolution.md) |
+| Architecture, memory, pins and clocks | [Architecture](docs/architecture.md) |
+| Clipping / DMA lifecycle details | [Graphics clipping](docs/graphics_clipping.md), [DMA stop/restart](docs/rp2350_dma_stop.md) |
+| USB image transfer | [Example 43](examples/43_host_image/README.md) |
+| Tests, sanitizers, analysis and coverage | [Code quality](docs/code_quality.md), [diagnostic triage](docs/code_quality_findings.md) |
+| Contribute or prepare a release | [Contributing](CONTRIBUTING.md), [design principles](docs/design_principles.md) |
+| AI development and agent instructions | [AI policy](AI_POLICY.md), [AGENTS.md](AGENTS.md) |
+| Licensing / conduct / security | [Provenance](THIRD_PARTY_LICENSES.md), [conduct](CODE_OF_CONDUCT.md), [security](SECURITY.md) |
+| Release history / documentation review | [Changelog](CHANGELOG.md), [documentation audit](docs/documentation-audit.md) |
+| Feature examples | Numbered `examples/*/main.cpp` headers describe expected output and regressions |
 
 ## Roadmap
 
 - Overscan and non-IBM raster variants (the engine already accepts
-  arbitrary timings; `VideoMode` is a curated catalog, not a limit).
+  representable custom timings internally; public `begin()` accepts catalog
+  `VideoMode` values, not an arbitrary timing descriptor).
 - Additional display families (e.g. Amstrad monitors) as new backends.
   (Hercules is deliberately NOT on this list: PicoTTL's MDA backend is
   already pixel-addressable at 720×350 on the same monitor, a strict

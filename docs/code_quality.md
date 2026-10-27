@@ -1,8 +1,13 @@
 # Code quality and CI
 
-The two existing required checks keep their exact names: **Host test suite**
-and **RP2350 firmware build**. New checks are advisory initially: their real
-failures remain visible, but repository rules must not require them yet.
+The workflows define five checks: **Host test suite**, **RP2350 firmware
+build**, **Host sanitizers and coverage**, **Host static analysis** and
+**CodeQL C++ host**. Their names must remain stable. The initial rollout
+policy required the first two and treated new analyses as advisory. Actual
+required-check settings live in GitHub rulesets, not these workflow files;
+inspect those settings before changing protections. Do not remove a check
+that has already been promoted to required.
+
 There is no blanket `continue-on-error`, automatic production fix, warning
 suppression, or minimum coverage percentage. Static analysis uses an explicit,
 versioned baseline for reviewed pre-existing diagnostics; see below.
@@ -288,8 +293,10 @@ and generated constant font data needed for a valid build; report filtering
 excludes results whose primary location is outside own host production code.
 Unresolved/locationless diagnostics are retained. `paths-ignore` is not used
 as a misleading exclusion for manually compiled C++. No query IDs are
-globally suppressed. The real PIO/DMA engine, examples and applications
-are compiled by firmware CI but are not CodeQL-analyzed in this first phase.
+globally suppressed. Host extraction includes the actual engine control flow
+compiled under test-only names against the recorder; the published report
+scope excludes these engine copies. Real SDK/MMIO execution and the firmware
+examples/applications are not analyzed by this host CodeQL configuration.
 
 ## PR reports, permissions and failure policy
 
@@ -306,8 +313,9 @@ write access; execution may first require maintainer approval under the
 repository's fork-workflow policy. Public fork PRs receive a read-only
 token and no repository secrets. Keep the settings that send write tokens
 or secrets to fork workflows disabled.
-No `pull_request_target` or privileged `workflow_run` is used. Workflows
-use `contents: read`; only the CodeQL job requests `security-events: write`.
+No `pull_request_target` or privileged `workflow_run` is used by these
+checks. Their workflows use `contents: read`; only the CodeQL job requests
+`security-events: write`. Release/sync automation has separate permissions.
 Fork tokens/code-scanning availability are governed by GitHub. Upload
 failures are infrastructure failures; SARIF artifacts remain available.
 The current repository is public. A future private deployment also needs
@@ -320,14 +328,16 @@ visible failures. CodeQL alerts appear in code scanning; a successful
 CodeQL job does not mean there are no alerts. Do not enable a code-scanning
 merge-protection rule during the initial advisory phase.
 
-Workflows run for PRs and pushes to `main`, `develop` and `release/**`, plus
-manual dispatch for the new quality workflows. Topic branches are checked
-through PRs, avoiding simultaneous push and PR jobs for the same topic.
+The host, firmware, quality and CodeQL workflows have unfiltered
+`pull_request` triggers; their push triggers select `main`, `develop` and
+`release/**`. Quality and CodeQL also support manual dispatch. Topic branches
+are normally checked through PRs, avoiding simultaneous push and PR jobs.
 
 ## GitHub setup and promotion to required checks
 
-No repository settings are changed by this branch. After reviewing/merging
-the workflows, run them once so GitHub can discover the check names:
+The following is rollout guidance, not a statement of the live ruleset.
+Retain protections already in force. Run the workflows so GitHub can
+discover the check names:
 
 1. In **Settings → Advanced Security → Code Security → CodeQL analysis**,
    select **Set up → Advanced** for this repository workflow. If default
@@ -339,14 +349,15 @@ the workflows, run them once so GitHub can discover the check names:
    ruleset targeting `main`, `develop` and the intended `release/**` branches.
    Retain existing protections and bypass policy. Require PRs and require
    status checks to pass before merging.
-3. Select exactly **Host test suite** and **RP2350 firmware build**, using
+3. Retain **Host test suite** and **RP2350 firmware build**, using
    **GitHub Actions** as the expected source. Keep these required. GitHub
    only offers eligible checks that succeeded in the past seven days;
    open a PR/run CI first if absent.
-4. Initially leave **Host sanitizers and coverage**, **Host static analysis**
+4. During initial rollout only, leave **Host sanitizers and coverage**, **Host static analysis**
    and **CodeQL C++ host** unselected. Do not add required code-scanning
    severity rules yet. If using classic branch protection, apply the same
-   two check names there and inspect overlapping rulesets.
+   check names there and inspect overlapping rulesets. Do not unselect any
+   analysis check already required by the project.
 5. After representative PRs and fork runs are stable, first promote host
    sanitizers, then CodeQL execution. Independently decide which CodeQL
    alert severities should block. Promote static analysis after triaging
