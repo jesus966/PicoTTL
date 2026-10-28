@@ -369,3 +369,37 @@ PICOTTL_TEST(egaApplicationLifetimeStorageKeepsLifecycleAndOwnership) {
     exerciseApplicationLifetimeDevice<rp2350::EgaDisplayDevice, 8>(
         VideoMode::IbmEga350, VideoMode::IbmCga640);
 }
+
+PICOTTL_TEST(cgaFormatAndPinRejectionsPreserveValidRetry) {
+    for (const auto mode : {VideoMode::IbmCga320, VideoMode::IbmCga640}) {
+        PackedFramebuffer<6> packed6(storageA, sizeof storageA, modeWidth(mode), modeHeight(mode));
+        PackedFramebuffer8 packed8(storageA, sizeof storageA, modeWidth(mode), modeHeight(mode));
+        PackedFramebuffer4 packed4(storageB, sizeof storageB, modeWidth(mode), modeHeight(mode));
+        MonochromeFramebuffer mono(storageB, sizeof storageB, modeWidth(mode), modeHeight(mode));
+        for (Framebuffer* unsupported : {static_cast<Framebuffer*>(&packed6),
+                                         static_cast<Framebuffer*>(&packed8)}) {
+            auto config = configFor(static_cast<rp2350::CgaDisplayDevice*>(nullptr));
+            config.framebuffer = unsupported;
+            rp2350::CgaDisplayDevice device(config);
+            CHECK(!device.begin(mode)); CHECK(!device.isActive());
+            CHECK(engineRecording().source == nullptr); CHECK_EQ(engineRecording().starts, 0u);
+            CHECK(device.setFramebuffer(&packed4)); CHECK(device.begin(mode));
+            CHECK_EQ(engineRecording().bitsPerPixel, 4u); device.end();
+        }
+        for (unsigned bit = 1; bit < 4; ++bit) {
+            auto config = configFor(static_cast<rp2350::CgaDisplayDevice*>(nullptr));
+            config.framebuffer = &packed4;
+            switch (bit) {
+                case 1: ++config.greenPin; break;
+                case 2: ++config.redPin; break;
+                default: ++config.intensityPin; break;
+            }
+            rp2350::CgaDisplayDevice device(config);
+            CHECK(!device.begin(mode)); CHECK(!device.isActive());
+            CHECK(engineRecording().source == nullptr); CHECK_EQ(engineRecording().starts, 0u);
+            // Unused higher wires must not prevent valid one-wire output.
+            CHECK(device.setFramebuffer(&mono)); CHECK(device.begin(mode));
+            CHECK_EQ(engineRecording().bitsPerPixel, 1u); device.end();
+        }
+    }
+}

@@ -202,13 +202,13 @@ PICOTTL_TEST(scrollMovesContentAndClearsBottom) {
     f.text.setCursor(0, 1);
     f.text.putChar('B');
     std::uint8_t rowBBefore[90 * 14];
-    std::memcpy(rowBBefore, f.storage + 1 * 14 * 90, sizeof rowBBefore);
+    std::memcpy(rowBBefore, f.storage + sizeof rowBBefore, sizeof rowBBefore);
 
     f.text.scroll(1);
     // Row 1 content moved to row 0.
     CHECK_EQ(std::memcmp(f.storage, rowBBefore, sizeof rowBBefore), 0);
     // Bottom text row cleared.
-    for (std::size_t i = 24u * 14u * 90u; i < 25u * 14u * 90u; ++i) {
+    for (std::size_t i = 24u * sizeof rowBBefore; i < 25u * sizeof rowBBefore; ++i) {
         CHECK_EQ(f.storage[i], 0x00);
     }
 }

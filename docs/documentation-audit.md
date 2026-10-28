@@ -140,8 +140,12 @@ is needed to achieve this navigation improvement.
    into a facade guarantee. The beginner guide points to the guaranteed
    order. Resolve these example/header descriptions in a separately scoped
    change rather than modifying examples here.
-4. **Quality maintenance:** retire the obsolete VideoTiming baseline entry only
-   through its reviewed process. Confirm live GitHub required checks separately;
+4. **Quality maintenance:** clang-tidy cleanup retired the obsolete timing and
+   corrected production entries. Explicit timing-table member initialization
+   also retired the three cppcheck entries; both analyzer baselines are empty.
+   Initialization costs and the table-before-DMA contract are documented in
+   [current triage](code_quality_findings.md).
+   Confirm live GitHub required checks separately;
    workflow names and documentation cannot establish server-side protections.
 5. **USB evidence:** example 43 states approximate throughput. Treat it as an
    estimate unless a board/host/version measurement is recorded. Physical

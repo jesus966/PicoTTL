@@ -232,7 +232,7 @@ PICOTTL_TEST(engineProgramAllocationFailureCanRetryEitherDepth) {
             CHECK(!engine.configure(timing));
             checkRejectedStart(engine);
             sdk::recording.allowPixelProgram = true;
-            CHECK(engine.setPixelSource(f.pixels, 4 * depth, depth));
+            CHECK(engine.setPixelSource(f.pixels, std::size_t{4} * depth, depth));
             CHECK(engine.configure(timing));
             CHECK(sdk::recording.programs[0][depth]);
             CHECK_EQ(sdk::recording.invalidPc, 0u);
@@ -317,7 +317,7 @@ PICOTTL_TEST(engineValidPixelDepthsAndDetachKeepTheirLifecycle) {
         sdk::reset(); Fixture f;
         {
             HardwareScanlineEngine engine(f.config());
-            CHECK(engine.setPixelSource(f.pixels, 4 * depth, depth, depth == 8 ? 6 : depth));
+            CHECK(engine.setPixelSource(f.pixels, std::size_t{4} * depth, depth, depth == 8 ? 6 : depth));
             CHECK(engine.configure(timing)); CHECK(engine.start());
             CHECK(sdk::recording.dma[2].read == f.pixels);
             CHECK_EQ(sdk::recording.dma[2].count, depth);
@@ -923,9 +923,9 @@ PICOTTL_TEST(engineZeroVerticalIntervalsRemainExecutableInSignalOnlyMode) {
             const bool sync = line >= requested.vActive + requested.vFrontPorch &&
                 line < requested.vActive + requested.vFrontPorch + requested.vSyncWidth;
             const unsigned vs = sync ? 0u : 2u; // active-low VSYNC
-            CHECK_EQ(f.table[line * 3u], vs | (line < requested.vActive ? 4u : 0u));
-            CHECK_EQ(f.table[line * 3u + 1u], vs | 1u);
-            CHECK_EQ(f.table[line * 3u + 2u], vs);
+            CHECK_EQ(f.table[static_cast<std::size_t>(line) * 3u], vs | (line < requested.vActive ? 4u : 0u));
+            CHECK_EQ(f.table[static_cast<std::size_t>(line) * 3u + 1u], vs | 1u);
+            CHECK_EQ(f.table[static_cast<std::size_t>(line) * 3u + 2u], vs);
         }
         CHECK(engine.start()); engine.stop(); CHECK(!sdk::recording.smClaimed[0][1]);
     }

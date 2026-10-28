@@ -12,6 +12,13 @@ There is no blanket `continue-on-error`, automatic production fix, warning
 suppression, or minimum coverage percentage. Static analysis uses an explicit,
 versioned baseline for reviewed pre-existing diagnostics; see below.
 
+The production manifest currently has zero raw clang-tidy 18.1.3 diagnostics
+under the existing checks. cppcheck 2.13.0 also reports zero raw diagnostics;
+both analyzer baseline lists are empty. The broader
+host test sources retain three deliberate invalid-enum test-input diagnostics;
+see [diagnostic triage](code_quality_findings.md) for scope and explanations.
+Do not interpret production-scope cleanliness as a whole-project guarantee.
+
 ## Scope and reproducibility
 
 The host build is a standalone C++17 project in `tests/`. It includes the
@@ -215,9 +222,11 @@ Findings are not automatically called defects; use the
 
 ### Static-analysis baseline
 
-[`tools/quality-baseline.json`](../tools/quality-baseline.json) contains six
-explicit identities for the twelve original occurrences (nine clang-tidy,
-three cppcheck). The baseline changes only the wrapper's acceptance decision:
+[`tools/quality-baseline.json`](../tools/quality-baseline.json) now has empty
+clang-tidy and cppcheck lists after the corresponding raw
+diagnostics disappeared. Retired entries are described in
+[diagnostic triage](code_quality_findings.md). The baseline changes only the
+wrapper's acceptance decision:
 native warning/error diagnostics are neither disabled nor removed. Known-only
 runs are green; any new identity fails. Disappeared entries are reported for
 cleanup but do not fail an otherwise complete run. No GitHub permissions or

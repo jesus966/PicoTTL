@@ -54,9 +54,13 @@ PICOTTL_TEST(fontsCarryCodePageMetadataAndIdenticalMetrics) {
     CHECK_EQ(cp437.glyphCount, cp850.glyphCount);
     CHECK_EQ(cp437.underlineRow, cp850.underlineRow);
     // The datasets themselves differ (0xB5: frame fragment vs A-acute).
-    CHECK(std::memcmp(cp437.glyph(kDifferingByte).data,
-                      cp850.glyph(kDifferingByte).data,
-                      cp437.bytesPerGlyph()) != 0);
+    const auto glyph437 = cp437.glyph(kDifferingByte);
+    const auto glyph850 = cp850.glyph(kDifferingByte);
+    CHECK(glyph437.data != nullptr);
+    CHECK(glyph850.data != nullptr);
+    if (glyph437.data != nullptr && glyph850.data != nullptr) {
+        CHECK(std::memcmp(glyph437.data, glyph850.data, cp437.bytesPerGlyph()) != 0);
+    }
 }
 
 PICOTTL_TEST(glyphIndexWideningKeepsByteSemantics) {
