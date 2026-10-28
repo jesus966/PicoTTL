@@ -76,7 +76,6 @@ constexpr std::uint16_t modeHeight(VideoMode mode) {
         case VideoMode::IbmCga320:
             return 200;
         case VideoMode::IbmEga350:
-            return 350;
         case VideoMode::IbmMda:
         default:
             return 350;

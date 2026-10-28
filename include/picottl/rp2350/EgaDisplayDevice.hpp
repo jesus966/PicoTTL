@@ -184,7 +184,7 @@ private:
                    ? PioScanlineEngine::timingWordsFor(modes::kIbmCga640)
                    : PioScanlineEngine::timingWordsFor(modes::kIbmCga320));
 
-    std::uint32_t timingTable_[kTimingWords];
+    std::uint32_t timingTable_[kTimingWords]{};
     PioScanlineEngine engine_;
     Config config_;
     Framebuffer* framebuffer_ = nullptr;

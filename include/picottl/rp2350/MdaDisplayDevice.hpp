@@ -122,7 +122,7 @@ private:
             ? PioScanlineEngine::timingWordsFor(modes::kIbmMda)
             : PioScanlineEngine::timingWordsFor(modes::kMdaOverscan);
 
-    std::uint32_t timingTable_[kTimingWords];
+    std::uint32_t timingTable_[kTimingWords]{};
     PioScanlineEngine engine_;
     Framebuffer* framebuffer_ = nullptr;
     std::array<std::int16_t, Config::kMaxPixelBits> pixelPins_{}; ///< Resolved per-bit GPIOs.

@@ -1,52 +1,107 @@
 # Static-analysis diagnostic triage
 
-This page explains reviewed diagnostics tracked in
-[the baseline](../tools/quality-baseline.json). Reports retain all findings;
-known diagnostics may pass comparison, new ones fail, and infrastructure or
-incomplete-report errors fail separately. Baseline membership is not proof
-that a diagnostic is harmless or that a defect has been fixed. See the
-[comparison and update procedure](code_quality.md#static-analysis-baseline).
+## Current clang-tidy status
 
-## Corrected timing arithmetic and a stale baseline entry
+With clang-tidy 18.1.3, the unchanged `.clang-tidy` configuration and the
+existing `tools/quality.py` production manifest, all nine translation units
+complete with **zero raw diagnostics**, not just zero new baseline findings.
+The clang-tidy baseline list is empty. This is a scoped analysis result,
+not proof that every possible static-analysis problem is absent.
 
-`VideoTiming::refreshRateMilliHz()` now widens horizontal/vertical totals
-before multiplication, guards a zero denominator and checks representability
-before returning uint32. Its zero-result contract is documented in
-[VideoTiming.hpp](../include/picottl/video/VideoTiming.hpp) and exercised by
-[test_video_timing.cpp](../tests/test_video_timing.cpp), including constexpr
-cases. The earlier unsigned-product/zero-divisor defect is not outstanding.
+The analyzed set is AnsiTerminal, DisplaySurface, Graphics, Terminal, Text,
+HostDisplayDevice and the MDA/CGA/EGA device implementations, plus matching
+public-header diagnostics. Tests, generated font datasets and the engine's
+SDK-recorder copies are outside the CI report manifest; that scope was not
+changed to obtain this result.
 
-The baseline still contains its `bugprone-implicit-widening-of-multiplication-result`
-entry. A report should identify it as missing when the warning no longer
-appears. Removing an obsolete entry requires the normal reviewed baseline
-update; documentation changes do not alter that gate or suppress diagnostics.
+## Corrected findings
 
-## CGA array warning: not established as a defect
+| Check | Initial location / symbol | Cause and correction |
+|---|---|---|
+| bugprone-branch-clone | VideoMode.hpp, modeHeight() | EGA and MDA/default both return 350. Grouped case labels retain all catalog and fallback results and constexpr evaluation. |
+| clang-analyzer-core.UndefinedBinaryOperatorResult | CgaDisplayDevice.cpp, begin() | Capability validation already limits depth to 1/2/4, but analysis did not carry that bound into colorPins indexing. An explicit local array-derived bound makes the physical RGBI limit independently enforced; no array expansion or warning suppression. |
+| bugprone-implicit-widening-of-multiplication-result | Engine/GPIO/Text tests | Calculations widened only after multiplication. Widened operands first; Text scrolling offsets now derive from the actual saved-row size. Tested values and expected results are unchanged. |
+| clang-analyzer-core.NonNullParamChecker | test_code_page.cpp, font dataset comparison | glyph() can return an empty view. Both pointers are asserted nonnull and memcmp is executed only when both are valid, so a bad resource fails assertions without calling memcmp on null. |
 
-clang-tidy's `clang-analyzer-core.UndefinedBinaryOperatorResult` reports a path
-to `colorPins[4]` in `CgaDisplayDevice::begin()`. The preceding capability
-check admits only 1/2/4-bit formats, making that path infeasible under the
-current implementation. Treat it as a likely interprocedural false positive,
-not demonstrated out-of-bounds access. Preserve the report pending a narrow
-analysis decision; do not suppress all core analyzer warnings.
+The production CI inventory initially contained five occurrences of two
+unique diagnostics. An additional run across all 37 host compilation units
+found 26 occurrences and 13 unique diagnostic identities: ten safely
+correctable diagnostics (nine source locations; two arguments at one memcmp)
+and three intentional negative-test diagnostics. The complete-host run after
+the corrections contains only the three diagnostics described below.
 
-## Intentional repeated mode height
+The obsolete VideoTiming widening entry was also removed from the baseline:
+its production arithmetic and zero-result contract had already been fixed.
+No timing calculation was changed by this cleanup. The two live production
+entries were removed only after a zero-diagnostic run with the old baseline.
 
-`bugprone-branch-clone` identifies identical EGA350 and MDA/default results in
-`modeHeight()` in [VideoMode.hpp](../include/picottl/VideoMode.hpp). Both are
-350 under the current catalog. This is a maintainability diagnostic, not a
-runtime defect.
+## Deliberate invalid-enum tests outside the production manifest
 
-## Device timing-table initialization warnings
+An additional run across all host translation units under the same
+configuration retains three
+`clang-analyzer-optin.core.EnumCastOutOfRange` diagnostics:
 
-cppcheck's `uninitMemberVar` identifies the MDA/CGA/EGA devices' embedded
-timing tables. Configuration fills the used entries before DMA setup; the
-analyzer does not model that ownership/write path. No uninitialized read is
-demonstrated on valid startup. Resource/configuration tests exercise this
-sequence without executing hardware transfers. Keep these reports visible
-until a focused reviewed decision changes the baseline or implementation.
+- test_engine_configuration.cpp constructs SyncPolarity(2) to test rejection.
+- test_framebuffer_lifecycle.cpp constructs VideoMode(255) in two rejection paths.
 
-Header diagnostics may repeat across translation units. Compare both raw
-occurrences and stable unique identities; do not hard-code historical case
-counts or percentages as evidence of the current suite. Host sanitizer and
-CodeQL results complement these findings rather than overruling them.
+Both enums have fixed uint8 underlying types. Those integer values are
+representable in C++, but are intentionally outside PicoTTL's named/supported
+values. The checker compares casts with enumerator values, so these are
+expected diagnostics on the test inputs, not demonstrated production bugs.
+See the [checker implementation](https://github.com/llvm/llvm-project/blob/llvmorg-18.1.3/clang/lib/StaticAnalyzer/Checkers/EnumCastOutOfRangeChecker.cpp)
+and [C++17 enumeration value rules](https://timsong-cpp.github.io/cppwp/std17/dcl.enum#8).
+
+The tests and diagnostics remain visible. They have not been suppressed,
+added to the baseline, removed from tests or replaced with opaque inputs to
+hide the values from analysis. A whole-host analysis therefore reports three
+diagnostics; it must not be described as globally warning-free.
+
+## Timing-table initialization and cppcheck status
+
+cppcheck 2.13.0 originally reported three `uninitMemberVar` diagnostics for
+MDA/CGA/EGA timing tables. All three tables now have explicit member value
+initialization (`{}`). The production analysis has zero raw cppcheck
+diagnostics and both analyzer baseline lists are empty; no checks or report
+scope were changed.
+
+The tables are embedded `std::uint32_t` arrays, declared before the engine
+that borrows their addresses:
+
+| Backend | Capacity (words) | Capacity (bytes) |
+|---|---:|---:|
+| MDA | 1,480 | 5,920 |
+| CGA | 1,048 | 4,192 |
+| EGA | 1,456 | 5,824 |
+
+The engine constructor only copies configuration. `buildTimingBuffer()`
+validates capacity and segments, then emits every used word before DMA
+setup. DMA reads exactly `wordsUsed_`, not the full backend capacity; spare
+entries are not consumed. Configuration stops owned hardware first and
+invalidates configuration; failure cannot make an incomplete table startable.
+Explicit initialization is therefore deterministic initial storage, not a
+repair for a demonstrated uninitialized DMA read. Table generation and all
+DMA setup/restart operations remain unchanged.
+
+An external before/after object compilation used the Pico 2 Release compile
+commands (Arm GCC 15.2.1, SDK 2.3.0, `-O3`, no LTO), adding `-fstack-usage`
+for both variants. Initialization adds one constructor-time `memset` of the
+listed capacity. Constructor text changes from 280 to 288 bytes (MDA),
+124 to 136 (CGA), and 128 to 140 (EGA). All six constructor frames are 56
+bytes; this is per-function compiler evidence, not a bound including callees.
+There is no temporary table, additional object storage or static RAM. Linked
+firmware size and execution cycles cannot be inferred exactly from these
+object-section measurements. Static-duration objects are already zeroed by
+startup, so the added constructor clear can be redundant; it is bounded and
+occurs outside scanout, once per object construction, not on each begin().
+
+Existing engine tests check exact timing words, maximum-component table
+population, exact/one-word-short capacities with sentinels, rejected startup,
+retry, and DMA counts/restart. These exercise the table-before-DMA contract;
+no private-state test hook or duplicate test was added just to observe zeros.
+See [baseline comparison/update procedure](code_quality.md#static-analysis-baseline).
+
+Raw reports, unique identities, infrastructure failures and missing baseline
+entries must remain distinguishable. Static analysis and host tests do not
+validate physical PIO/DMA timing. The maintainer-reported PicoTTL 1.0.0 Arm
+hardware tests are historical evidence, not physical validation of this
+cleanup or the current development branch.

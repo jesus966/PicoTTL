@@ -92,6 +92,11 @@ bool CgaDisplayDevice::begin(VideoMode mode) {
         const std::uint8_t colorPins[] = {config_.bluePin, config_.greenPin,
                                           config_.redPin, config_.intensityPin};
         const unsigned bits = bitsPerPixel(format);
+        // The physical RGBI array bounds this lookup independently of
+        // the format capability check and format-to-depth mapping above.
+        if (bits > sizeof(colorPins) / sizeof(colorPins[0])) {
+            return false;
+        }
         for (unsigned bit = 1; bit < bits; ++bit) {
             if (colorPins[bit] !=
                 static_cast<std::uint8_t>(config_.bluePin + bit)) {

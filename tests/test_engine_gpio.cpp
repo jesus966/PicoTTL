@@ -51,7 +51,7 @@ PICOTTL_TEST(engineBRespectsAbsolutePinsAndSharedWindow) {
         sdk::reset(); Fixture f; sdk::recording.gpioBase[pio] = c.base;
         {
             HighGpioScanlineEngine engine(f.config(c.sync, c.video, pio));
-            CHECK(engine.setPixelSource(f.pixels, 4u * c.depth, static_cast<std::uint8_t>(c.depth)));
+            CHECK(engine.setPixelSource(f.pixels, std::size_t{4} * c.depth, static_cast<std::uint8_t>(c.depth)));
             CHECK_EQ(engine.configure(timing), c.valid);
             if (c.valid) {
                 CHECK_EQ(sdk::recording.outRelative[pio][0], c.sync - c.base);
